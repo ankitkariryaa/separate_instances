@@ -1,0 +1,26 @@
+name: separate-trees 
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - coverage
+  - cryptography
+  - future
+  - gdown
+  - gdal
+  - geopandas
+  - matplotlib
+  - numpy
+  - libiconv
+  - python
+  - scikit-image
+  - scikit-learn
+  - tqdm
+  - pip:
+    - opencv-python
+    - geopy
+    - ipdb
+    - pylint
+    - pytest
+    - python-dateutil
+    - rasterio
