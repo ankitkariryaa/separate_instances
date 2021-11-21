@@ -153,13 +153,10 @@ def connecting_points(p1, p2):
         point_list.append((x1,y1))
     return point_list
 
-def are_points_in_line_of_sight(p1, p2, img):
+def gaps_on_connecting_linesegment(p1, p2, img):
     cp = connecting_points(p1, p2)
     xs, ys = zip(*cp)
-    if np.all(img[xs, ys] > 0):
-        return True
-    else:
-        return False
+    return np.count_nonzero(img[xs, ys] == 0)
 
 def get_distance_between_points(p1, p2, distance_metric):
     if distance_metric == 'euclidean':
@@ -178,21 +175,15 @@ def get_closest_center(labeled_centers_on_instance, center_points, point, height
     selected_center = center_points[0]
     dt = get_distance_between_points(selected_center, point, distance_metric)
     weight = 1 / height_center_points[selected_center]
-    connecting_line = are_points_in_line_of_sight(selected_center, point, img)
-    if connecting_line:
-        min_dist = weight * dt
-    else:
-        min_dist  = dt + no_connection_penalty # No weighting if points are not connected by a straight line
+    gaps_on_linesegment = gaps_on_connecting_linesegment(selected_center, point, img)
+    min_dist = (weight * dt) + (gaps_on_linesegment * no_connection_penalty)
 
     # Iterate over all centers until we find closest one
     for center in center_points[1:]:
         dt = get_distance_between_points(center, point, distance_metric)
         weight = 1 / height_center_points[center]
-        connecting_line = are_points_in_line_of_sight(center, point, img)
-        if connecting_line:
-            dist = weight * dt
-        else:
-            dist  = dt + no_connection_penalty
+        gaps_on_linesegment = gaps_on_connecting_linesegment(center, point, img)
+        dist  = (weight * dt) + (gaps_on_linesegment * no_connection_penalty)
         if dist < min_dist:
             min_dist = dist
             selected_center = center
