@@ -17,6 +17,7 @@ from sklearn.cluster import DBSCAN
 from src import utils
 from glob import glob
 
+import time
 
 
 def remove_neighbouring_pixels_with_same_value(x, eps = 10):
@@ -195,23 +196,37 @@ def get_centers_as_points(centers_image):
     return list(zip(cn[0], cn[1]))
 
 def find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_points, distance_metric = 'euclidean'):
-
     final_img = np.zeros_like(labeled_grey_im)
     unqi = np.unique(labeled_grey_im)
-    for u in tqdm(unqi):
+    for u in tqdm(unqi[1:]): # Iterate over all instances expect the background
         # That's one instance as per original labels
         ig = np.where(labeled_grey_im == u, 1, 0).astype(np.uint8)
         labeled_centers_on_instance = labeled_centers * ig # Get the centers on this instance
         cp = get_centers_as_points(labeled_centers_on_instance) # Get their coordinates
 
-        xmax, ymax = labeled_grey_im.shape
-        # Can be made faster and parallelized
-        for i in range(0, xmax):
-            for j in range(0, ymax):
-                if ig[i,j] == 1:
-                    cc = get_closest_center(labeled_centers_on_instance, cp, (i,j), max_center_points, labeled_grey_im, distance_metric)
-                    final_img[i,j] = cc
+        ax = np.nonzero(ig == 1)
+        points = list(zip(ax[0], ax[1]))
+        for (i,j) in points:
+            cc = get_closest_center(labeled_centers_on_instance, cp, (i,j), max_center_points, labeled_grey_im, distance_metric)
+            final_img[i,j] = cc
     return final_img
+
+def majority_filter(img_ori, voting_kernel = 2):
+    img = img_ori.copy()
+    xmax, ymax = img.shape
+    ax = np.nonzero(img != 0)
+    points = list(zip(ax[0], ax[1]))
+    for (i,j) in points:
+        cn = img_ori[max(i-voting_kernel, 0):min(i+voting_kernel+1,xmax) , max(j-voting_kernel,0):min(j+voting_kernel+1,ymax)]
+        unq, unc = np.unique(cn, return_counts=True)
+        unqc_sorted_index = np.argsort(-unc)
+
+        mj = unq[unqc_sorted_index][0]
+        if mj == 0: # If background is the majority class, then we take the next class
+            mj = unq[unqc_sorted_index][1]
+        if mj != img[i,j]: # Replace with majority class if it is a lone pixel of this class
+            img[i,j] = mj
+    return img
 
 def read_image(img_path, fill_holes=True, dtype = np.uint8):
     im = rasterio.open(img_path)
@@ -249,6 +264,7 @@ def separate_objects(img_grey, max_filter_size ,centers_only):
         # This is the slow step
         labeled_im, _ = ndimage.label(img_grey)
         relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, 'euclidean')
+        relabed_img = majority_filter(relabed_img)
         return m_centers_to_labels, relabed_img
 
 def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size ,centers_only, force_overwrite):
