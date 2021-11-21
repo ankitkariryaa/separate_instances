@@ -153,30 +153,50 @@ def connecting_points(p1, p2):
         point_list.append((x1,y1))
     return point_list
 
-def get_distance_between_points(p1, p2, weight, distance_metric):
+def are_points_in_line_of_sight(p1, p2, img):
+    cp = connecting_points(p1, p2)
+    xs, ys = zip(*cp)
+    if np.all(img[xs, ys] > 0):
+        return True
+    else:
+        return False
+
+def get_distance_between_points(p1, p2, distance_metric):
     if distance_metric == 'euclidean':
-        d = weight * np.sqrt( ((p1[0] - p2[0]) * (p1[0] - p2[0])) + ((p1[1] - p2[1]) * (p1[1] - p2[1])))
+        d = np.sqrt( ((p1[0] - p2[0]) * (p1[0] - p2[0])) + ((p1[1] - p2[1]) * (p1[1] - p2[1])))
     elif distance_metric == 'manhattan':
-        d = weight * (np.abs(p1[0] - p2[0]) + np.abs(p1[1] - p2[1]))
+        d = np.abs(p1[0] - p2[0]) + np.abs(p1[1] - p2[1])
     else:
         raise NotImplementedError()
     return d
 
-def get_closest_center(labeled_centers_on_instance, center_points, point, height_center_points, distance_metric):
+def get_closest_center(labeled_centers_on_instance, center_points, point, height_center_points, img, distance_metric, no_connection_penalty = 10000):
     if len(center_points) == 0:
         return 1
     elif len(center_points) == 1:
         return labeled_centers_on_instance[center_points[0]]
     selected_center = center_points[0]
+    dt = get_distance_between_points(selected_center, point, distance_metric)
     weight = 1 / height_center_points[selected_center]
-    min_dist = get_distance_between_points(selected_center, point, weight, distance_metric)
+    connecting_line = are_points_in_line_of_sight(selected_center, point, img)
+    if connecting_line:
+        min_dist = weight * dt
+    else:
+        min_dist  = dt + no_connection_penalty # No weighting if points are not connected by a straight line
 
+    # Iterate over all centers until we find closest one
     for center in center_points[1:]:
+        dt = get_distance_between_points(center, point, distance_metric)
         weight = 1 / height_center_points[center]
-        dist = get_distance_between_points(center, point, weight, distance_metric)
+        connecting_line = are_points_in_line_of_sight(center, point, img)
+        if connecting_line:
+            dist = weight * dt
+        else:
+            dist  = dt + no_connection_penalty
         if dist < min_dist:
             min_dist = dist
             selected_center = center
+
     return labeled_centers_on_instance[selected_center]
 
 def get_centers_as_points(centers_image):
@@ -198,7 +218,7 @@ def find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_po
         for i in range(0, xmax):
             for j in range(0, ymax):
                 if ig[i,j] == 1:
-                    cc = get_closest_center(labeled_centers_on_instance, cp, (i,j), max_center_points, distance_metric)
+                    cc = get_closest_center(labeled_centers_on_instance, cp, (i,j), max_center_points, labeled_grey_im, distance_metric)
                     final_img[i,j] = cc
     return final_img
 
