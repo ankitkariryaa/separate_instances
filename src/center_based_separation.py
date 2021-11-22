@@ -16,9 +16,11 @@ from tqdm import tqdm
 from sklearn.cluster import DBSCAN
 from src import utils
 from glob import glob
+import psutil
 
-import time
-
+import ray
+cpu_count = psutil.cpu_count(logical = False)
+ray.init() # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
 
 def remove_neighbouring_pixels_with_same_value(x, eps = 10):
     cl_dbscan = DBSCAN(eps=eps, min_samples=1)
@@ -191,6 +193,48 @@ def get_closest_center(labeled_centers_on_instance, center_points, point, height
 
     return labeled_centers_on_instance[selected_center]
 
+@ray.remote
+def parallel_split_instance_based_on_centers(labeled_grey_im, unique_instances, labeled_centers, max_center_points, distance_metric ):
+    results = {} # A map of location (i,j) and it's corresponding label
+
+    for u in unique_instances:
+        ig = np.where(labeled_grey_im == u, 1, 0).astype(np.uint8)
+        labeled_centers_on_instance = labeled_centers * ig # Get the centers on this instance
+        cp = get_centers_as_points(labeled_centers_on_instance) # Get their coordinates
+
+        ax = np.nonzero(ig == 1)
+        points = list(zip(ax[0], ax[1]))
+        for (i,j) in points:
+            cc = get_closest_center(labeled_centers_on_instance, cp, (i,j), max_center_points, labeled_grey_im, distance_metric)
+            results[(i,j)] = cc
+    return results
+
+
+# After reading about the various possibilities related to parallel programming in python, I decided to use Apache ray. The second and quite close candidate was joblib
+# Reasons for using Ray
+# 1. Support for shared objects (in joblib similar setup would require the user of numpy memmap)
+# 2. Actor model (which I have also admired)
+# 3. Cluster support
+# https://docs.ray.io/en/latest/auto_examples/tips-for-first-time.html
+def parallel_find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_points, cpu_count, distance_metric = 'euclidean'):
+    final_img = np.zeros_like(labeled_grey_im)
+    # We parallelize at this point. Each thread gets n unique instances to label
+    unqi = np.unique(labeled_grey_im)
+    splits = np.arange(1, len(unqi), int(len(unqi)/cpu_count) )  # Split instances for parallel processing; 0 - background is ignored
+    indx_s = [(splits[i-1],splits[i]) for i in range(1, len(splits)) ]
+    start = time.time()
+    result_ids = [parallel_split_instance_based_on_centers.remote(labeled_grey_im, unqi[i:j], labeled_centers, max_center_points, distance_metric) for (i,j) in indx_s]
+    results = ray.get(result_ids)
+    print(f"Duration for parallel splitting using {cpu_count} CPU: {time.time() - start}")
+
+    labelled_pixels = results[0]
+    for r in results[1:]:
+        labelled_pixels.update(r)
+
+    for ((i,j), cc) in labelled_pixels.items():
+        final_img[i,j] = cc
+    return final_img
+
 def get_centers_as_points(centers_image):
     cn = np.nonzero(centers_image > 0)
     return list(zip(cn[0], cn[1]))
@@ -248,7 +292,7 @@ def save_image(img, img_path, meta, dtype = rasterio.uint32):
     with rasterio.open(img_path, 'w', **meta) as dst:
         dst.write(img.astype(dtype),1)
 
-def separate_objects(img_grey, max_filter_size ,centers_only):
+def separate_objects(img_grey, max_filter_size, centers_only, cpu_count):
     time1 = time.time()
     max_filter_size = max_filter_size # Default 12
     dist_transform = cv2.distanceTransform(img_grey, cv2.DIST_L2,5)
@@ -263,7 +307,10 @@ def separate_objects(img_grey, max_filter_size ,centers_only):
     else:
         # This is the slow step
         labeled_im, _ = ndimage.label(img_grey)
-        relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, 'euclidean')
+        # Single threaded
+        # relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, 'euclidean')
+        # Multi threaded
+        relabed_img = parallel_find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, cpu_count, 'euclidean')
         relabed_img = majority_filter(relabed_img)
         return m_centers_to_labels, relabed_img
 
@@ -281,7 +328,7 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
         out_center = f"{output_dir}/centers_{file.split('/')[-1]}"
         out_split_instances =  f"{output_dir}/split_{file.split('/')[-1]}"
         if not os.path.isfile(out_center) or force_overwrite:
-            m_centers, relabed_img = separate_objects(img, max_filter_size ,centers_only)
+            m_centers, relabed_img = separate_objects(img, max_filter_size ,centers_only, cpu_count)
             print(f'Centers written to {out_center} for {file}')
             save_image(m_centers, out_center, meta)
             if not centers_only:
