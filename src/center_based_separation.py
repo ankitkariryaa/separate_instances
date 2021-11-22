@@ -1,17 +1,10 @@
-import os, subprocess
-import argparse
-import logging
-import shutil
+import os
 import cv2
-from PIL import Image
 import numpy as np
 import rasterio
-import geopandas as gpd
 from scipy import ndimage
-from scipy import stats
 import time
-from datetime import timedelta
-from matplotlib import pyplot as plt
+from pathlib import Path
 from tqdm import tqdm
 from sklearn.cluster import DBSCAN
 from src import utils
@@ -333,6 +326,7 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
     for file in files:
         print(f'Analysing {file}')
         img, meta = read_image(file)
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         out_center = f"{output_dir}/centers_{file.split('/')[-1]}"
         out_split_instances =  f"{output_dir}/split_{file.split('/')[-1]}"
         if not os.path.isfile(out_center) or force_overwrite:
