@@ -56,7 +56,7 @@ In this image the centers were found in 108ms and the labels were found in 52 se
 
 Predicted pixel labels using erosion based separation technique (approach 2).
 ![image](https://user-images.githubusercontent.com/822583/142921459-fc29918a-a1a3-4a5c-bb49-f58c6ed02156.png)
-In this image the labels were found in 84.8 seconds on 4 CPU cores. 
+In this image the labels were found in 84.8 seconds on 4 CPU cores. The instances were eroded at [3,8,15] pixels from the boundary. A more granual erosion example [2,5,8,11,14,17] might lead to finer results but it will be slower.
    
 Known issues
 ----------
