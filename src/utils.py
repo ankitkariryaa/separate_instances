@@ -1,4 +1,7 @@
 import argparse
+import rasterio
+from scipy import ndimage
+import numpy as np
 
 def str2bool(arg_name):
     def str2bool_(v):
@@ -13,6 +16,43 @@ def str2bool(arg_name):
                 f'Boolean value expected for argument {arg_name}.')
 
     return str2bool_
+
+def read_image(img_path, fill_holes=True, dtype = np.uint8):
+    im = rasterio.open(img_path)
+    meta = im.meta
+    img = im.read()
+    img_grey = img[0,:,:]#.mean(axis=(0))) # Same as [0,:,:], for single band image
+    if fill_holes:
+        img_grey = ndimage.binary_fill_holes(img_grey)
+    return img_grey.astype(dtype), meta
+
+def save_image(img, img_path, meta, dtype = rasterio.uint32):
+    meta.update(count=1,
+            dtype=dtype,
+            TILED='YES',
+            COMPRESS='LZW',
+            BIGTIFF='IF_SAFER',
+            multithread=True,
+            NUM_THREADS='ALL_CPUS')
+    with rasterio.open(img_path, 'w', **meta) as dst:
+        dst.write(img.astype(dtype),1)
+
+def majority_filter(img_ori, voting_kernel = 2):
+    img = img_ori.copy()
+    xmax, ymax = img.shape
+    ax = np.nonzero(img != 0)
+    points = list(zip(ax[0], ax[1]))
+    for (i,j) in points:
+        cn = img_ori[max(i-voting_kernel, 0):min(i+voting_kernel+1,xmax) , max(j-voting_kernel,0):min(j+voting_kernel+1,ymax)]
+        unq, unc = np.unique(cn, return_counts=True)
+        unqc_sorted_index = np.argsort(-unc)
+
+        mj = unq[unqc_sorted_index][0]
+        if mj == 0: # If background is the majority class, then we take the next class
+            mj = unq[unqc_sorted_index][1]
+        if mj != img[i,j]: # Replace with majority class if it is a lone pixel of this class
+            img[i,j] = mj
+    return img
 
 def get_args():
     parser = argparse.ArgumentParser(description='Post process the predicted segmentations and separate trees in there',
