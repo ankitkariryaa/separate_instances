@@ -141,7 +141,7 @@ def parallel_find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_
     start = time.time()
     result_ids = [parallel_split_instance_based_on_centers.remote(labeled_grey_im_id, unqi[i:j], labeled_centers_id, max_center_points_id, distance_metric) for (i,j) in indx_s]
     results = ray.get(result_ids)
-    print(f"Duration for parallel splitting using {cpu_count} CPU: {time.time() - start}")
+    print(f"Duration for parallel splitting using {cpu_count} CPU: {time.time() - start} sec")
 
     # Accumulate the results in a single dictionary
     labelled_pixels = results[0]
@@ -216,12 +216,20 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
                 utils.save_image(relabed_img, out_split_instances, meta)
 
 if __name__ == '__main__':
-    args = utils.get_args()
+    args = utils.get_args('center_based_separation')
     phy_cpu = psutil.cpu_count(logical = False)
     if args.cpu == -1 or phy_cpu < args.cpu:
         cpu_count = phy_cpu
     else:
         cpu_count = args.cpu
-    ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
 
-    separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type, args.output_dir, args.max_filter_size ,args.save_only_centers, args.force_overwrite, cpu_count)
+    try:
+        ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
+        separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type, args.output_dir, args.max_filter_size ,args.save_only_centers, args.force_overwrite, cpu_count)
+        ray.shutdown()
+    except:
+        ray.shutdown()
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)

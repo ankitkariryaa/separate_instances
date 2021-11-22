@@ -1,32 +1,18 @@
-import os, subprocess
-import cv2
-import numpy as np
-import rasterio
-from rasterio import windows
-import geopandas as gpd
-from scipy import ndimage
-from scipy import stats
-import time
-import random
-from random import randint
-from collections import Counter
-from datetime import timedelta
-from tqdm.notebook import tqdm
-from collections import deque
-
-
 import os
+import sys
 import cv2
-import numpy as np
-import rasterio
-from scipy import ndimage
-import time
-from pathlib import Path
-from tqdm import tqdm
-from sklearn.cluster import DBSCAN
-from src import utils
-from glob import glob
+import random
 import psutil
+import logging
+import time
+
+from scipy import ndimage
+from pathlib import Path
+from glob import glob
+from collections import Counter
+import numpy as np
+
+from src import utils
 
 import ray
 
@@ -58,7 +44,64 @@ def major_instance_in_neighbourhood(pxs, start_index, BORDER = 1):
         return x[0]
     return m1i
 
-def regrow_to_original_size_with_limited_looping(clipped_labels_with_background, labels_from_last_iteration, start_index, BORDER = 1):
+@ray.remote
+def parallel_get_pixel_class(points, ds_prev, labels_from_last_iteration, regrow_kernel, xmax, ymax, start_index, BORDER):
+    results = {} # A map of location (i,j) and it's corresponding label
+    for (i,j) in points:
+        neighbors = ds_prev[max(i-regrow_kernel, 0):min(i+regrow_kernel+1,xmax) , max(j-regrow_kernel,0):min(j+regrow_kernel+1,ymax)]
+        old_neighbor_label = labels_from_last_iteration[max(i-regrow_kernel, 0):min(i+regrow_kernel+1,xmax), max(j-regrow_kernel,0):min(j+regrow_kernel+1,ymax)]
+
+        old_neighbor_label = np.where(old_neighbor_label == ds_prev[i,j], 1, 0) # It should be same as using ds[i,j]
+        neighbors = neighbors * old_neighbor_label
+        ms = major_instance_in_neighbourhood( neighbors.flatten(), start_index, BORDER)
+
+        if ms is not None:
+            results[(i,j)] = ms
+
+    return results
+
+def parallel_regrow_to_original_size(clipped_labels_with_background, labels_from_last_iteration, start_index, cpu_count, BORDER = 1):
+    ds = clipped_labels_with_background.copy()
+    rem_border = []
+    iteration = 1
+    regrow_kernel = 1 # One side of the kernel
+    xmax, ymax = ds.shape
+    while True:
+        borders_left = 0
+        ds_prev = ds.copy()
+        ax = np.nonzero((ds >= BORDER) & (ds < start_index))
+        points = list(zip(ax[0], ax[1]))
+
+        splits = np.arange(1, len(points), int(len(points)/cpu_count) )  # Split instances for parallel processing; 0 - background is ignored
+        indx_s = [(splits[i-1], splits[i]) for i in range(1, len(splits)) ]
+
+        # Do the main processing in parallel
+        result_ids = [parallel_get_pixel_class.remote(points[i:j], ds_prev, labels_from_last_iteration, regrow_kernel, xmax, ymax, start_index, BORDER) for (i,j) in indx_s]
+        results = ray.get(result_ids)
+
+        # Accumulate the results in a single dictionary
+        labelled_points = results[0]
+        for r in results[1:]:
+            labelled_points.update(r)
+
+        borders_left = len(points) - len(labelled_points)
+
+        for ((i,j), cc) in labelled_points.items():
+            ds[i,j] = cc
+
+        if borders_left == 0:
+            logging.info(f"no border pixels are left")
+            break
+        if (iteration >= 10) and (len(set(rem_border[-2:])) == 1):
+            logging.info(rem_border[-8:])
+            logging.info("the border pixels did not change for the last 3 iterations")
+            break
+        logging.info(f'Border left after iteration {iteration}: {borders_left}')
+        rem_border.append(borders_left)
+        iteration+=1
+    return ds
+
+def regrow_to_original_size(clipped_labels_with_background, labels_from_last_iteration, start_index, BORDER = 1):
     ds = clipped_labels_with_background.copy()
     rem_border = []
     iteration = 1
@@ -67,9 +110,9 @@ def regrow_to_original_size_with_limited_looping(clipped_labels_with_background,
         borders_left = 0
         xmax, ymax = ds.shape
         ds_prev = ds.copy()
-        ns = np.nonzero((ds >= BORDER) & (ds < start_index))
-        to_loop_over = list(zip(ns[0], ns[1]))
-        for (i,j) in to_loop_over:
+        ax = np.nonzero((ds >= BORDER) & (ds < start_index))
+        points = list(zip(ax[0], ax[1]))
+        for (i,j) in points:
             neighbors = ds_prev[max(i-regrow_kernel, 0):min(i+regrow_kernel+1,xmax) , max(j-regrow_kernel,0):min(j+regrow_kernel+1,ymax)]
             old_neighbor_label = labels_from_last_iteration[max(i-regrow_kernel, 0):min(i+regrow_kernel+1,xmax), max(j-regrow_kernel,0):min(j+regrow_kernel+1,ymax)]
 
@@ -82,58 +125,13 @@ def regrow_to_original_size_with_limited_looping(clipped_labels_with_background,
             else:
                 ds[i,j] = ms
         if borders_left == 0:
-            print(f"no border pixels are left")
+            logging.info(f"no border pixels are left")
             break
         if (iteration >= 10) and (len(set(rem_border[-2:])) == 1):
-            print(rem_border[-8:])
-            print("the border pixels did not change for the last 3 iterations")
+            logging.info(rem_border[-8:])
+            logging.info("the border pixels did not change for the last 3 iterations")
             break
-        print(f'Border left after iteration {iteration}: {borders_left}')
-        rem_border.append(borders_left)
-        iteration+=1
-    return ds
-
-def regrow_to_original_size(clipped_labels_with_background, labels_from_last_iteration, start_index, BORDER = 1):
-    ds = clipped_labels_with_background.copy()
-    MAX_ITERATIONS = 25
-    rem_border = []
-    iteration = 1
-    regrow_kernel = 1 # One side of the kernel
-    while True:
-        borders_left = 0
-        # print("iteration number is: ", iteration)
-        xmax, ymax = ds.shape
-        ds_prev = ds.copy()
-        for i in range(0, xmax):
-            for j in range(0, ymax):
-                # There is a bug in this code. Image an instance is split into two. And both the instances are now considered for further splitting. Now in the next erosion cycle, we get ride of one this this instance.
-                # With the current approach we will eat this instance with the left over instance.
-                # Solution: When deciding upon the new label, only consider intances that have the same base label.
-                # We will need the labels from the last instance.
-                if ds[i,j] >= BORDER and ds[i,j] < start_index: # It same as BORDER for this cycle;
-
-                    neighbors = ds_prev[max(i-regrow_kernel, 0):min(i+regrow_kernel+1,xmax) , max(j-regrow_kernel,0):min(j+regrow_kernel+1,ymax)]
-                    old_neighbor_label = labels_from_last_iteration[max(i-regrow_kernel, 0):min(i+regrow_kernel+1,xmax), max(j-regrow_kernel,0):min(j+regrow_kernel+1,ymax)]
-                    # print(ds_prev[i,j], neighbors, old_neighbor_label)
-
-                    old_neighbor_label = np.where(old_neighbor_label == ds[i,j], 1, 0)
-                    neighbors = neighbors * old_neighbor_label
-                    # print(ds_prev[i,j], neighbors, old_neighbor_label)
-                    ms = major_instance_in_neighbourhood( neighbors.flatten(), start_index, BORDER)
-
-                    # print(ds_prev[i,j], BORDER,start_index, ms)
-                    if ms == None:
-                        borders_left += 1
-                    else:
-                        ds[i,j] = ms
-        if borders_left == 0:
-            print(f"no border pixels are left")
-            break
-        if (iteration >= 10) and (len(set(rem_border[-2:])) == 1):
-            print(rem_border[-8:])
-            print("the border pixels did not change for the last 3 iterations")
-            break
-        print(f'Border left after iteration {iteration}: {borders_left}')
+        logging.info(f'Border left after iteration {iteration}: {borders_left}')
         rem_border.append(borders_left)
         iteration+=1
     return ds
@@ -163,7 +161,7 @@ def convert_to_continues_numberiung(lb_img_ori):
 #1. Apply distance transform and clip on a low threshold
 #2. Assign new ids to the clipped instances and regrow them to their original size
 #3. Take the smaller instances to the final image and repeat the process for larger instance with higher threshold
-def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_list, min_instance_size, BORDER = 1, BACKGROUND = 0):
+def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_list, min_instance_size, cpu_count, BORDER = 1, BACKGROUND = 0):
     """Separate into smaller trees
 
     Args:
@@ -188,7 +186,7 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
 
     # Each progressive erosion relies on the output of the last step; There it is, unfortunately, not possible to parallelize here.
     for cdt in clip_distance_list:
-        print(f'Using distance threshold of {cdt} pixels')
+        logging.info(f'Using distance threshold of {cdt} pixels')
         dist_transform = cv2.distanceTransform(instance_to_split_further.astype(np.uint8), cv2.DIST_L2,5)
 
         _, clipped_image = cv2.threshold(dist_transform, cdt, 1, 0)
@@ -197,23 +195,24 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
 
         # Move all the newly discovered labels by that order
         clipped_labels[clipped_labels > 0] += first_free_index
-        print(np.unique(clipped_labels))
+        logging.info(np.unique(clipped_labels))
         new_first_free_index = np.max(clipped_labels) + 1
         clipped_labels_with_background = np.where( clipped_labels > 0, clipped_labels, instance_to_split_further)
-        regrown_labels = regrow_to_original_size_with_limited_looping(clipped_labels_with_background, instance_to_split_further, first_free_index, BORDER = 1)
-        print(f'First free index {first_free_index}, new_first_free_index {new_first_free_index}')
+
+        if cpu_count <= 1:
+            logging.info(f"Regrowing labels on a single core.")
+            regrown_labels = regrow_to_original_size(clipped_labels_with_background, instance_to_split_further, first_free_index, BORDER = 1)
+        else:
+            logging.info(f"Regrowing labels using {cpu_count} CPU cores.")
+            regrown_labels = parallel_regrow_to_original_size(clipped_labels_with_background, instance_to_split_further, first_free_index, cpu_count, BORDER = 1)
+        logging.info(f'First free index {first_free_index}, new_first_free_index {new_first_free_index}')
         intermediate_shrunk.append(clipped_labels_with_background)
         intermediate_regrown.append(regrown_labels)
-        # # plt.subplot(121)
-        # # plt.imshow(clipped_labels_with_background, cmap='jet')
-        # # plt.subplot(122)
-        # # plt.imshow(regrown_labels, cmap='jet')
-        # # plt.show()
 
         assert not (regrown_labels==clipped_labels_with_background).all()
 
-        # Three cases exists; There is no change to a instance but it gets a new label ->  Add to final if smaller than threshold, or give another try
-        # 2. An instance is now split into multiple -> Add to final if smaller than threshold, or give another try
+        # Three cases exists; There is no change to a instance but it gets a new label ->  Add to final if smaller than threshold, or give another try; Use the newer label
+        # 2. An instance is now split into multiple -> For all splits; Add to final if smaller than threshold, or give another try
         # 3. An instance is now removed by the threshold -> Final should already contain it.
 
         unq_regrwn = np.unique(regrown_labels)
@@ -236,10 +235,10 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
 
     return final_image, intermediate_shrunk, intermediate_regrown
 
-def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size ,centers_only, force_overwrite, cpu_count):
-    size_thresh = 500
-    clip_distance_list = np.arange(3, 16, 2)
-    min_instance_size = 4
+def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, size_thresh ,min_eroded_instance_size, clip_distance_list, force_overwrite, cpu_count):
+    # size_thresh = 500
+    # clip_distance_list = np.arange(3, 16, 2)
+    # min_instance_size = 4
 
     # Get all input image paths
     files = glob( f"{input_dir}/{image_file_prefix}*{image_file_type}" )
@@ -249,21 +248,36 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
 
     for file in files:
         print(f'Analysing {file}')
+        logging.info(f'Analysing {file}')
         img, meta = utils.read_image(file)
         out_split_instances =  f"{output_dir}/erosion_split_{file.split('/')[-1]}"
         if not os.path.isfile(out_split_instances) or force_overwrite:
-            sp, intermediate_shrunk, intermediate_regrown = iteratively_erode_and_separate_objects(img, size_thresh, clip_distance_list, min_instance_size )
-            print(f'Split instances written to {out_split_instances} for {file}')
+            start = time.time()
+            sp, intermediate_shrunk, intermediate_regrown = iteratively_erode_and_separate_objects(img, size_thresh, clip_distance_list, min_eroded_instance_size, cpu_count)
+            logging.info(f"Instance splitting using {cpu_count} CPU cores performed in {time.time() - start} sec")
             utils.save_image(sp, out_split_instances, meta)
+            logging.info(f'Split instances written to {out_split_instances} for {file}')
 
 if __name__ == '__main__':
-    args = utils.get_args()
+    args = utils.get_args('erosion_based_separation')
+    logs_file = utils.initialize_log_dir(args.log_dir)
+    print(f'Writing logs to {logs_file}')
     phy_cpu = psutil.cpu_count(logical = False)
     if args.cpu == -1 or phy_cpu < args.cpu:
         cpu_count = phy_cpu
     else:
         cpu_count = args.cpu
-    ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
-
-    separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type, args.output_dir, args.max_filter_size ,args.save_only_centers, args.force_overwrite, cpu_count)
+    try:
+        ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
+        separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type,
+            args.output_dir, args.size_thresh, args.min_eroded_instance_size, args.clip_distance_list,
+            args.force_overwrite, cpu_count)
+        ray.shutdown()
+    except:
+        ray.shutdown()
+        logging.info('Run interrupted')
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
 

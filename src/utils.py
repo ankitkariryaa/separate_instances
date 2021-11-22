@@ -1,7 +1,14 @@
+import os
+import socket
+import random
 import argparse
+import logging
 import rasterio
 from scipy import ndimage
 import numpy as np
+from pathlib import Path
+from datetime import datetime
+
 
 def str2bool(arg_name):
     def str2bool_(v):
@@ -54,7 +61,20 @@ def majority_filter(img_ori, voting_kernel = 2):
             img[i,j] = mj
     return img
 
-def get_args():
+def initialize_log_dir(log_dir):
+
+    current_time = datetime.now().strftime('%b%d_%H-%M-%S')
+    rs = random.Random(datetime.now())
+    hash = rs.getrandbits(4)
+    os.makedirs(log_dir, exist_ok=True)
+    logs_file = os.path.join(log_dir, f'{current_time}_{hash}_{socket.gethostname()}_logs.txt')
+
+    # BasicConfig must be called before any logs are written!
+    logging.basicConfig(filename=logs_file, level=logging.INFO, format='%(levelname)s: %(message)s')
+    logging.info(f'Writing the logs to {logs_file}')
+    return logs_file
+
+def get_args(task = 'center_based_separation'):
     parser = argparse.ArgumentParser(description='Post process the predicted segmentations and separate trees in there',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
@@ -70,10 +90,19 @@ def get_args():
                         help='where to save the logs')
     parser.add_argument('--cpu', type=int, default=-1,
                         help='How many CPUs to use for the parallelized tasks. -1 means use all. To disable parallel processing, use 1.')
-    parser.add_argument('-m', '--max-filter-size', metavar='B', type=int, default=12,
-                        help='One of the hyperparameters. The kernel size of the max filter operation (in pixels). It should be close to width/height of an average instance.')
-    parser.add_argument('-c', '--save-only-centers', type=str2bool("save_only_centers"), dest='save_only_centers', default=False,
-                            help='Whether to save the only the centers.')
     parser.add_argument('-f', '--force-overwrite', type=str2bool("force_overwrite"), dest='force_overwrite', default=False,
                             help='Whether to overwrite exisiting files.')
+    if task == 'center_based_separation':
+        parser.add_argument('-m', '--max-filter-size', metavar='B', type=int, default=12,
+                            help='One of the hyperparameters. The kernel size of the max filter operation (in pixels). It should be close to width/height of an average instance.')
+        parser.add_argument('-c', '--save-only-centers', type=str2bool("save_only_centers"), dest='save_only_centers', default=False,
+                                help='Whether to save the only the centers.')
+    elif task == 'erosion_based_separation':
+        parser.add_argument('-sth', '--size-thresh', metavar='B', type=int, default=500,
+                            help='Minimum size of the instance to be considered for spliting.')
+        parser.add_argument('-eis', '--min-eroded-instance-size', metavar='B', type=int, default=4,
+                            help='Minimum size of the instance to be considered for spliting.')
+        parser.add_argument('-dl', '--clip_distance_list', nargs='+', default=[3,8,15],
+                                help='Distance in pixel used for separating the images.')
+
     return parser.parse_args()
