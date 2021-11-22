@@ -186,13 +186,16 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
 
     # Each progressive erosion relies on the output of the last step; There it is, unfortunately, not possible to parallelize here.
     for cdt in clip_distance_list:
-        logging.info(f'Using distance threshold of {cdt} pixels')
+        time1 = time.time()
+        logging.info(f'Using distance threshold of {cdt} pixels. All times are cumulative.')
         # dist_transform = cv2.distanceTransform(instance_to_split_further.astype(np.uint8), cv2.DIST_L2,5)
         # _, clipped_image = cv2.threshold(dist_transform, cdt, 1, 0)
         dist_transform = ndimage.distance_transform_edt(instance_to_split_further)
+        logging.info(f'Distance_transform_edt returned in {(time.time()-time1)*1000.0} ms.')
         clipped_image = np.where(dist_transform > cdt, 1, 0)
         clipped_labels, _ = ndimage.label(clipped_image)
         clipped_labels = cleanup_labeled_image(clipped_labels, min_instance_size, BACKGROUND)
+        logging.info(f'Clipped and relaballed in total of {(time.time()-time1)*1000.0} ms.')
 
         # Move all the newly discovered labels by that order
         clipped_labels[clipped_labels > 0] += first_free_index
@@ -206,6 +209,7 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
         else:
             logging.info(f"Regrowing labels using {cpu_count} CPU cores.")
             regrown_labels = parallel_regrow_to_original_size(clipped_labels_with_background, instance_to_split_further, first_free_index, cpu_count, BORDER = 1)
+        logging.info(f'Regrown to original size in total of {(time.time()-time1)*1000.0} ms.')
         logging.info(f'First free index {first_free_index}, new_first_free_index {new_first_free_index}')
         intermediate_shrunk.append(clipped_labels_with_background)
         intermediate_regrown.append(regrown_labels)
@@ -263,11 +267,9 @@ if __name__ == '__main__':
     args = utils.get_args('erosion_based_separation')
     logs_file = utils.initialize_log_dir(args.log_dir)
     print(f'Writing logs to {logs_file}')
-    phy_cpu = psutil.cpu_count(logical = False)
-    if args.cpu == -1 or phy_cpu < args.cpu:
-        cpu_count = phy_cpu
-    else:
-        cpu_count = args.cpu
+
+    cpu_count = utils.get_cpu_count(args.cpu)
+
     try:
         ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
         separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type,
