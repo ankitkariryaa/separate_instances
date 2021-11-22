@@ -50,6 +50,7 @@ def clustering_based_neigbourhood_cleanup(x, eps = 10):
 
     return x * flx # Return back original value
 
+# There is a bug in this function!
 def kernel_based_neighbourhood_cleanup(center_points_with_duplicates, cleanup_kernel):
     final_centers = center_points_with_duplicates.copy()
     ax = np.nonzero(center_points_with_duplicates >= 0)
@@ -197,7 +198,7 @@ def separate_objects(img_grey, max_filter_size, centers_only, cpu_count):
 
     m_img = ndimage.maximum_filter(dist_transform, size=max_filter_size)
     max_center_points_with_duplicates = np.where(m_img == dist_transform, m_img, 0)
-    max_center_points = kernel_based_neighbourhood_cleanup(max_center_points_with_duplicates, int(max_filter_size/2))
+    max_center_points = clustering_based_neigbourhood_cleanup(max_center_points_with_duplicates, int(max_filter_size/2))
     logging.info(f'Centers found and cleaned up in total of {(time.time()-time1)*1000.0} ms.')
 
     m_centers = np.where(max_center_points>0,1,0)
@@ -213,7 +214,7 @@ def separate_objects(img_grey, max_filter_size, centers_only, cpu_count):
         else: # Multi threaded
             relabed_img = parallel_find_pixel_class_by_distance(m_centers_to_labels, labeled_img_grey, max_center_points, cpu_count, 'euclidean')
 
-        relabed_img = utils.majority_filter_based_upon_original_labels(relabed_img, labeled_img_grey, 5)
+        relabed_img = utils.majority_filter_based_upon_original_labels(relabed_img, labeled_img_grey, 3)
         return m_centers_to_labels, relabed_img
 
 def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size ,centers_only, force_overwrite, cpu_count):
@@ -227,7 +228,7 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
         logging.info(f'Analysing {file}')
         img, meta = utils.read_image(file)
         out_center = f"{output_dir}/centers_{file.split('/')[-1]}"
-        out_split_instances =  f"{output_dir}/split_{file.split('/')[-1]}"
+        out_split_instances =  f"{output_dir}/center_based_relabeled_{file.split('/')[-1]}"
         if not os.path.isfile(out_center) or force_overwrite:
             m_centers, relabed_img = separate_objects(img, max_filter_size ,centers_only, cpu_count)
             logging.info(f'Centers written to {out_center} for {file}')

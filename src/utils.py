@@ -57,7 +57,7 @@ def majority_filter_based_upon_original_labels(img_distance_labeled, img_ori_lab
         points = list(zip(ax[0], ax[1]))
 
         for (i,j) in points:
-            cn = img_distance_labeled[max(i-voting_kernel, 0):min(i+voting_kernel+1,xmax) , max(j-voting_kernel,0):min(j+voting_kernel+1,ymax)]
+            cn = labeled_instance[max(i-voting_kernel, 0):min(i+voting_kernel+1,xmax) , max(j-voting_kernel,0):min(j+voting_kernel+1,ymax)]
             unq, unc = np.unique(cn, return_counts=True)
             unqc_sorted_index = np.argsort(-unc)
 
