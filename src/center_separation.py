@@ -1,20 +1,20 @@
 import os
-import cv2
 import sys
-import numpy as np
-import rasterio
-from scipy import ndimage
 import time
+import logging
+from scipy import ndimage
+import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 from sklearn.cluster import DBSCAN
-from src import utils
 from glob import glob
 import psutil
 
+from src import utils
+
 import ray
 
-def remove_neighbouring_pixels_with_same_value(x, eps = 10):
+def clustering_based_neigbourhood_cleanup(x, eps = 10):
     cl_dbscan = DBSCAN(eps=eps, min_samples=1)
 
     # Sometimes multi-values close by would have the same distance from the boundary
@@ -49,6 +49,19 @@ def remove_neighbouring_pixels_with_same_value(x, eps = 10):
     flx[uir, uic] = 1
 
     return x * flx # Return back original value
+
+def kernel_based_neighbourhood_cleanup(center_points_with_duplicates, cleanup_kernel):
+    final_centers = center_points_with_duplicates.copy()
+    ax = np.nonzero(center_points_with_duplicates >= 0)
+    points = list(zip(ax[0], ax[1]))
+    xmax, ymax = final_centers.shape
+    for (i,j) in points:
+        if final_centers[i,j] >= 0:
+            v = final_centers[i,j]
+            # Remove other centers in the neightbourhood
+            final_centers[max(i-cleanup_kernel, 0):min(i+cleanup_kernel+1,xmax) , max(j-cleanup_kernel,0):min(j+cleanup_kernel+1,ymax)] = 0
+            final_centers[i,j] = v # Keep the original value
+    return final_centers
 
 # Thanks for Mario Botsch, I still remember the easiest way of finding the points on a line segment connecting two points with a 8bit processor
 def connecting_points(p1, p2):
@@ -142,7 +155,7 @@ def parallel_find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_
     start = time.time()
     result_ids = [parallel_split_instance_based_on_centers.remote(labeled_grey_im_id, unqi[i:j], labeled_centers_id, max_center_points_id, distance_metric) for (i,j) in indx_s]
     results = ray.get(result_ids)
-    print(f"Duration for parallel splitting using {cpu_count} CPU: {time.time() - start} sec")
+    logging.info(f"Duration for parallel splitting using {cpu_count} CPU: {time.time() - start} sec")
 
     # Accumulate the results in a single dictionary
     labelled_pixels = results[0]
@@ -175,26 +188,32 @@ def find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_po
     return final_img
 
 def separate_objects(img_grey, max_filter_size, centers_only, cpu_count):
+    logging.info('Separating objects. All times are cumulative.')
     time1 = time.time()
     max_filter_size = max_filter_size # Default 12
     # dist_transform = cv2.distanceTransform(img_grey, cv2.DIST_L2,5)
     dist_transform = ndimage.distance_transform_edt(img_grey)
+    logging.info(f'distance_transform_edt returned in {(time.time()-time1)*1000.0} ms.')
+
     m_img = ndimage.maximum_filter(dist_transform, size=max_filter_size)
     max_center_points_with_duplicates = np.where(m_img == dist_transform, m_img, 0)
-    max_center_points = remove_neighbouring_pixels_with_same_value(max_center_points_with_duplicates, 1.25 * max_filter_size)
+    max_center_points = kernel_based_neighbourhood_cleanup(max_center_points_with_duplicates, int(max_filter_size/2))
+    logging.info(f'Centers found and cleaned up in total of {(time.time()-time1)*1000.0} ms.')
+
     m_centers = np.where(max_center_points>0,1,0)
     m_centers_to_labels, _ = ndimage.label(m_centers)
-    print(f'Centers found in {(time.time()-time1)*1000.0} ms!')
+    logging.info(f'Centers found in a total of {(time.time()-time1)*1000.0} ms.')
     if centers_only:
         return m_centers_to_labels, None
     else:
         # This is the slow step
-        labeled_im, _ = ndimage.label(img_grey)
+        labeled_img_grey, _ = ndimage.label(img_grey)
         if cpu_count <= 1: # Single threaded
-            relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, 'euclidean')
+            relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_img_grey, max_center_points, 'euclidean')
         else: # Multi threaded
-            relabed_img = parallel_find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, cpu_count, 'euclidean')
-        relabed_img = utils.majority_filter(relabed_img)
+            relabed_img = parallel_find_pixel_class_by_distance(m_centers_to_labels, labeled_img_grey, max_center_points, cpu_count, 'euclidean')
+
+        relabed_img = utils.majority_filter_based_upon_original_labels(relabed_img, labeled_img_grey, 5)
         return m_centers_to_labels, relabed_img
 
 def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size ,centers_only, force_overwrite, cpu_count):
@@ -205,25 +224,24 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     for file in files:
-        print(f'Analysing {file}')
+        logging.info(f'Analysing {file}')
         img, meta = utils.read_image(file)
         out_center = f"{output_dir}/centers_{file.split('/')[-1]}"
         out_split_instances =  f"{output_dir}/split_{file.split('/')[-1]}"
         if not os.path.isfile(out_center) or force_overwrite:
             m_centers, relabed_img = separate_objects(img, max_filter_size ,centers_only, cpu_count)
-            print(f'Centers written to {out_center} for {file}')
+            logging.info(f'Centers written to {out_center} for {file}')
             utils.save_image(m_centers, out_center, meta)
             if not centers_only:
-                print(f'Relablled image written to {out_split_instances} for {file}')
+                logging.info(f'Relablled image written to {out_split_instances} for {file}')
                 utils.save_image(relabed_img, out_split_instances, meta)
 
 if __name__ == '__main__':
     args = utils.get_args('center_based_separation')
-    phy_cpu = psutil.cpu_count(logical = False)
-    if args.cpu == -1 or phy_cpu < args.cpu:
-        cpu_count = phy_cpu
-    else:
-        cpu_count = args.cpu
+    logs_file = utils.initialize_log_dir(args.log_dir)
+    print(f'Writing logs to {logs_file}')
+
+    cpu_count = utils.get_cpu_count(args.cpu)
 
     try:
         ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4

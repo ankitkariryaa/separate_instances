@@ -1,4 +1,5 @@
 import os
+import psutil
 import socket
 import random
 import argparse
@@ -44,7 +45,30 @@ def save_image(img, img_path, meta, dtype = rasterio.uint32):
     with rasterio.open(img_path, 'w', **meta) as dst:
         dst.write(img.astype(dtype),1)
 
-def majority_filter(img_ori, voting_kernel = 2):
+def majority_filter_based_upon_original_labels(img_distance_labeled, img_ori_labeled, voting_kernel):
+    final_img = img_distance_labeled.copy()
+    xmax, ymax = img_distance_labeled.shape
+
+    unqi = np.unique(img_ori_labeled)
+    for u in unqi[1:]: # Iterate over all instances expect the background
+        ig = np.where(img_ori_labeled == u, 1, 0).astype(np.uint8)
+        labeled_instance = img_distance_labeled * ig # Get the centers on this instance
+        ax = np.nonzero(labeled_instance != 0)
+        points = list(zip(ax[0], ax[1]))
+
+        for (i,j) in points:
+            cn = img_distance_labeled[max(i-voting_kernel, 0):min(i+voting_kernel+1,xmax) , max(j-voting_kernel,0):min(j+voting_kernel+1,ymax)]
+            unq, unc = np.unique(cn, return_counts=True)
+            unqc_sorted_index = np.argsort(-unc)
+
+            mj = unq[unqc_sorted_index][0]
+            if mj == 0: # If background is the majority class, then we take the next class
+                mj = unq[unqc_sorted_index][1]
+            if mj != final_img[i,j]: # Replace with majority class if it is a current class is a minority
+                final_img[i,j] = mj
+    return final_img
+
+def majority_filter(img_ori, voting_kernel):
     img = img_ori.copy()
     xmax, ymax = img.shape
     ax = np.nonzero(img != 0)
@@ -74,6 +98,14 @@ def initialize_log_dir(log_dir):
     logging.info(f'Writing the logs to {logs_file}')
     return logs_file
 
+def get_cpu_count(cpu):
+    phy_cpu = psutil.cpu_count(logical = False)
+    if cpu == -1 or phy_cpu < cpu:
+        cpu_count = phy_cpu
+    else:
+        cpu_count = cpu
+    return cpu_count
+
 def get_args(task = 'center_based_separation'):
     parser = argparse.ArgumentParser(description='Post process the predicted segmentations and separate trees in there',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -93,7 +125,7 @@ def get_args(task = 'center_based_separation'):
     parser.add_argument('-f', '--force-overwrite', type=str2bool("force_overwrite"), dest='force_overwrite', default=False,
                             help='Whether to overwrite exisiting files.')
     if task == 'center_based_separation':
-        parser.add_argument('-m', '--max-filter-size', metavar='B', type=int, default=12,
+        parser.add_argument('-m', '--max-filter-size', metavar='B', type=int, default=15,
                             help='One of the hyperparameters. The kernel size of the max filter operation (in pixels). It should be close to width/height of an average instance.')
         parser.add_argument('-c', '--save-only-centers', type=str2bool("save_only_centers"), dest='save_only_centers', default=False,
                                 help='Whether to save the only the centers.')
