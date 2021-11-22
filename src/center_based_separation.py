@@ -19,8 +19,6 @@ from glob import glob
 import psutil
 
 import ray
-cpu_count = psutil.cpu_count(logical = False)
-ray.init() # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
 
 def remove_neighbouring_pixels_with_same_value(x, eps = 10):
     cl_dbscan = DBSCAN(eps=eps, min_samples=1)
@@ -307,14 +305,14 @@ def separate_objects(img_grey, max_filter_size, centers_only, cpu_count):
     else:
         # This is the slow step
         labeled_im, _ = ndimage.label(img_grey)
-        # Single threaded
-        # relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, 'euclidean')
-        # Multi threaded
-        relabed_img = parallel_find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, cpu_count, 'euclidean')
+        if cpu_count <= 1: # Single threaded
+            relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, 'euclidean')
+        else: # Multi threaded
+            relabed_img = parallel_find_pixel_class_by_distance(m_centers_to_labels, labeled_im, max_center_points, cpu_count, 'euclidean')
         relabed_img = majority_filter(relabed_img)
         return m_centers_to_labels, relabed_img
 
-def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size ,centers_only, force_overwrite):
+def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size ,centers_only, force_overwrite, cpu_count):
     # Get all input image paths
     files = glob(
          f"{input_dir}/{image_file_prefix}*{image_file_type}"
@@ -337,4 +335,11 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
 
 if __name__ == '__main__':
     args = utils.get_args()
-    separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type, args.output_dir, args.max_filter_size ,args.save_only_centers, args.force_overwrite)
+    phy_cpu = psutil.cpu_count(logical = False)
+    if args.cpu == -1 or phy_cpu < args.cpu:
+        cpu_count = phy_cpu
+    else:
+        cpu_count = args.cpu
+    ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
+
+    separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type, args.output_dir, args.max_filter_size ,args.save_only_centers, args.force_overwrite, cpu_count)

@@ -23,15 +23,17 @@ def get_args():
     parser.add_argument('-ft', '--image-file-type', type=str, default='.tif',
                         help='File type of images to process')
     parser.add_argument('-p', '--image-file-prefix', type=str, default='',
-                        help='Prefix of the image to process')                        
+                        help='Prefix of the image to process')
     parser.add_argument('-o','--output-dir', type=str, default='./output',
                         help='where to save the output')
     parser.add_argument('-l','--log-dir', type=str, default='./runs',
                         help='where to save the logs')
+    parser.add_argument('--cpu', type=int, default=-1,
+                        help='How many CPUs to use for the parallelized tasks. -1 means use all. To disable parallel processing, use 1.')
     parser.add_argument('-m', '--max-filter-size', metavar='B', type=int, default=12,
                         help='One of the hyperparameters. The kernel size of the max filter operation (in pixels). It should be close to width/height of an average instance.')
     parser.add_argument('-c', '--save-only-centers', type=str2bool("save_only_centers"), dest='save_only_centers', default=False,
                             help='Whether to save the only the centers.')
     parser.add_argument('-f', '--force-overwrite', type=str2bool("force_overwrite"), dest='force_overwrite', default=False,
-                            help='Whether to overwrite exisiting files.')                            
+                            help='Whether to overwrite exisiting files.')
     return parser.parse_args()
