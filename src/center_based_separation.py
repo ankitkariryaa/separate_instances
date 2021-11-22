@@ -1,5 +1,6 @@
 import os
 import cv2
+import sys
 import numpy as np
 import rasterio
 from scipy import ndimage
@@ -176,7 +177,8 @@ def find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_po
 def separate_objects(img_grey, max_filter_size, centers_only, cpu_count):
     time1 = time.time()
     max_filter_size = max_filter_size # Default 12
-    dist_transform = cv2.distanceTransform(img_grey, cv2.DIST_L2,5)
+    # dist_transform = cv2.distanceTransform(img_grey, cv2.DIST_L2,5)
+    dist_transform = ndimage.distance_transform_edt(img_grey)
     m_img = ndimage.maximum_filter(dist_transform, size=max_filter_size)
     max_center_points_with_duplicates = np.where(m_img == dist_transform, m_img, 0)
     max_center_points = remove_neighbouring_pixels_with_same_value(max_center_points_with_duplicates, 1.25 * max_filter_size)

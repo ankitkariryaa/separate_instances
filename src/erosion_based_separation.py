@@ -187,9 +187,10 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
     # Each progressive erosion relies on the output of the last step; There it is, unfortunately, not possible to parallelize here.
     for cdt in clip_distance_list:
         logging.info(f'Using distance threshold of {cdt} pixels')
-        dist_transform = cv2.distanceTransform(instance_to_split_further.astype(np.uint8), cv2.DIST_L2,5)
-
-        _, clipped_image = cv2.threshold(dist_transform, cdt, 1, 0)
+        # dist_transform = cv2.distanceTransform(instance_to_split_further.astype(np.uint8), cv2.DIST_L2,5)
+        # _, clipped_image = cv2.threshold(dist_transform, cdt, 1, 0)
+        dist_transform = ndimage.distance_transform_edt(instance_to_split_further)
+        clipped_image = np.where(dist_transform > cdt, 1, 0)
         clipped_labels, _ = ndimage.label(clipped_image)
         clipped_labels = cleanup_labeled_image(clipped_labels, min_instance_size, BACKGROUND)
 
