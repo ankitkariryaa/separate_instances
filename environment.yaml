@@ -17,6 +17,8 @@ dependencies:
   - scikit-learn
   - tqdm
   - pip:
+    - ray
+    - pcutils
     - opencv-python
     - geopy
     - ipdb

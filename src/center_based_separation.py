@@ -213,22 +213,32 @@ def parallel_split_instance_based_on_centers(labeled_grey_im, unique_instances, 
 # 1. Support for shared objects (in joblib similar setup would require the user of numpy memmap)
 # 2. Actor model (which I have also admired)
 # 3. Cluster support
-# https://docs.ray.io/en/latest/auto_examples/tips-for-first-time.html
+# Must read: https://docs.ray.io/en/latest/auto_examples/tips-for-first-time.html
+# See also: https://towardsdatascience.com/10x-faster-parallel-python-without-python-multiprocessing-e5017c93cce1
 def parallel_find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_points, cpu_count, distance_metric = 'euclidean'):
-    final_img = np.zeros_like(labeled_grey_im)
+
     # We parallelize at this point. Each thread gets n unique instances to label
     unqi = np.unique(labeled_grey_im)
     splits = np.arange(1, len(unqi), int(len(unqi)/cpu_count) )  # Split instances for parallel processing; 0 - background is ignored
-    indx_s = [(splits[i-1],splits[i]) for i in range(1, len(splits)) ]
+    indx_s = [(splits[i-1], splits[i]) for i in range(1, len(splits)) ]
+
+    # Store that large object in the local object store, instead of passing them around
+    labeled_centers_id = ray.put(labeled_centers)
+    labeled_grey_im_id = ray.put(labeled_grey_im)
+    max_center_points_id = ray.put(max_center_points)
+
+    # Do the main processing in parallel
     start = time.time()
-    result_ids = [parallel_split_instance_based_on_centers.remote(labeled_grey_im, unqi[i:j], labeled_centers, max_center_points, distance_metric) for (i,j) in indx_s]
+    result_ids = [parallel_split_instance_based_on_centers.remote(labeled_grey_im_id, unqi[i:j], labeled_centers_id, max_center_points_id, distance_metric) for (i,j) in indx_s]
     results = ray.get(result_ids)
     print(f"Duration for parallel splitting using {cpu_count} CPU: {time.time() - start}")
 
+    # Accumulate the results in a single dictionary
     labelled_pixels = results[0]
     for r in results[1:]:
         labelled_pixels.update(r)
 
+    final_img = np.zeros_like(labeled_grey_im)
     for ((i,j), cc) in labelled_pixels.items():
         final_img[i,j] = cc
     return final_img
