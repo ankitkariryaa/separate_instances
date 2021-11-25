@@ -1,8 +1,6 @@
 import os
 import sys
-import cv2
 import random
-import psutil
 import logging
 import time
 
@@ -11,7 +9,6 @@ from pathlib import Path
 from glob import glob
 from collections import Counter
 import numpy as np
-
 from src import utils
 
 import ray
@@ -174,9 +171,6 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
         intermediate_regrown ([2D nd array]): List of intermediate regrown images
     """
 
-    intermediate_shrunk = []
-    intermediate_regrown = []
-
     final_image, label_max_ori = ndimage.label(img_grey)
 
     final_image[final_image == BORDER] = label_max_ori +1
@@ -188,13 +182,14 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
     for cdt in clip_distance_list:
         time1 = time.time()
         logging.info(f'Using distance threshold of {cdt} pixels. All times are cumulative.')
-        # dist_transform = cv2.distanceTransform(instance_to_split_further.astype(np.uint8), cv2.DIST_L2,5)
-        # _, clipped_image = cv2.threshold(dist_transform, cdt, 1, 0)
         dist_transform = ndimage.distance_transform_edt(instance_to_split_further)
         logging.info(f'Distance_transform_edt returned in {(time.time()-time1)*1000.0} ms.')
         clipped_image = np.where(dist_transform > cdt, 1, 0)
         clipped_labels, _ = ndimage.label(clipped_image)
         clipped_labels = cleanup_labeled_image(clipped_labels, min_instance_size, BACKGROUND)
+        # Handle the case, when an image is completely eroded away
+        if not clipped_labels.any():
+            break
         logging.info(f'Clipped and relaballed in total of {(time.time()-time1)*1000.0} ms.')
 
         # Move all the newly discovered labels by that order
@@ -211,8 +206,6 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
             regrown_labels = parallel_regrow_to_original_size(clipped_labels_with_background, instance_to_split_further, first_free_index, cpu_count, BORDER = 1)
         logging.info(f'Regrown to original size in total of {(time.time()-time1)*1000.0} ms.')
         logging.info(f'First free index {first_free_index}, new_first_free_index {new_first_free_index}')
-        intermediate_shrunk.append(clipped_labels_with_background)
-        intermediate_regrown.append(regrown_labels)
 
         assert not (regrown_labels==clipped_labels_with_background).all()
 
@@ -238,13 +231,9 @@ def iteratively_erode_and_separate_objects(img_grey, size_thresh, clip_distance_
         ins_u = np.where(instance_to_split_further == u, u, 0)
         final_image = np.where(ins_u > 0, ins_u, final_image)
 
-    return final_image, intermediate_shrunk, intermediate_regrown
+    return final_image
 
-def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, size_thresh ,min_eroded_instance_size, clip_distance_list, force_overwrite, cpu_count):
-    # size_thresh = 500
-    # clip_distance_list = np.arange(3, 16, 2)
-    # min_instance_size = 4
-
+def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, size_thresh, clip_distance_list, min_eroded_instance_size, force_overwrite, cpu_count):
     # Get all input image paths
     files = glob( f"{input_dir}/{image_file_prefix}*{image_file_type}" )
     if len(files) == 0:
@@ -258,7 +247,7 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
         out_split_instances =  f"{output_dir}/erosion_split_{file.split('/')[-1]}"
         if not os.path.isfile(out_split_instances) or force_overwrite:
             start = time.time()
-            sp, intermediate_shrunk, intermediate_regrown = iteratively_erode_and_separate_objects(img, size_thresh, clip_distance_list, min_eroded_instance_size, cpu_count)
+            sp = iteratively_erode_and_separate_objects(img, size_thresh, clip_distance_list, min_eroded_instance_size, cpu_count)
             logging.info(f"Instance splitting using {cpu_count} CPU cores performed in {time.time() - start} sec")
             utils.save_image(sp, out_split_instances, meta)
             logging.info(f'Split instances written to {out_split_instances} for {file}')
@@ -273,7 +262,7 @@ if __name__ == '__main__':
     try:
         ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
         separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type,
-            args.output_dir, args.size_thresh, args.min_eroded_instance_size, args.clip_distance_list,
+            args.output_dir, args.size_thresh, args.clip_distance_list, args.min_eroded_instance_size,
             args.force_overwrite, cpu_count)
         ray.shutdown()
     except:
