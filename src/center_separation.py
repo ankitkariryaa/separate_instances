@@ -1,19 +1,14 @@
 import os
 import sys
-import time
 import logging
 from scipy import ndimage
 import numpy as np
 from pathlib import Path
-from tqdm import tqdm
 from sklearn.cluster import DBSCAN
 from glob import glob
-import psutil
+from numba import jit
 
 from src import utils
-
-import ray
-
 def clustering_based_neigbourhood_cleanup(x, eps = 10):
     cl_dbscan = DBSCAN(eps=eps, min_samples=1)
 
@@ -50,7 +45,7 @@ def clustering_based_neigbourhood_cleanup(x, eps = 10):
 
     return x * flx # Return back original value
 
-# There is a bug in this function!
+@jit(nopython=True)
 def kernel_based_neighbourhood_cleanup(center_points_with_duplicates, cleanup_kernel):
     final_centers = center_points_with_duplicates.copy()
     ax = np.nonzero(center_points_with_duplicates >= 0)
@@ -65,6 +60,7 @@ def kernel_based_neighbourhood_cleanup(center_points_with_duplicates, cleanup_ke
     return final_centers
 
 # Thanks for Mario Botsch, I still remember the Bresenham algorithm
+@jit(nopython=True)
 def connecting_points(p1, p2):
     x1, y1 = p1
     x2, y2 = p2
@@ -81,10 +77,19 @@ def connecting_points(p1, p2):
         point_list_y.append(y1)
     return point_list_x, point_list_y
 
+@jit(nopython=True)
 def gaps_on_connecting_linesegment(p1, p2, img):
-    xs, ys = connecting_points(p1, p2)
-    return np.count_nonzero(img[xs, ys] == 0)
+    (xs, ys) = connecting_points(p1, p2)
+    # Numba does not like numpy indexing so switching to a loop that numpy can optimize
+    # ln = img[xs, ys]
+    ln =[]
+    for i in range(len(xs)):
+        ln.append( img[ xs[i], ys[i] ])
 
+    r = np.count_nonzero(np.array(ln) == 0)
+    return r
+
+@jit(nopython=True)
 def get_distance_between_points(p1, p2, distance_metric):
     if distance_metric == 'euclidean':
         d = np.sqrt( ((p1[0] - p2[0]) * (p1[0] - p2[0])) + ((p1[1] - p2[1]) * (p1[1] - p2[1])))
@@ -94,7 +99,8 @@ def get_distance_between_points(p1, p2, distance_metric):
         raise NotImplementedError()
     return d
 
-def get_closest_center(labeled_centers_on_instance, center_points, point, edge_distance_of_center_points, img, distance_metric, no_connection_penalty = 10000):
+@jit(nopython=True)
+def get_closest_center(labeled_centers_on_instance, center_points, point, edge_distance_of_center_points, img, distance_metric, no_connection_penalty = 10):
     if len(center_points) == 0:
         return 1
     elif len(center_points) == 1:
@@ -117,61 +123,10 @@ def get_closest_center(labeled_centers_on_instance, center_points, point, edge_d
 
     return labeled_centers_on_instance[selected_center]
 
-@ray.remote
-def parallel_split_instance_based_on_centers(labeled_grey_im, unique_instances, labeled_centers, max_center_points, distance_metric ):
-    results = {} # A map of location (i,j) and it's corresponding label
-
-    for u in unique_instances:
-        ig = np.where(labeled_grey_im == u, 1, 0).astype(np.uint8)
-        labeled_centers_on_instance = labeled_centers * ig # Get the centers on this instance
-        cp = get_centers_as_points(labeled_centers_on_instance) # Get their coordinates
-
-        ax = np.nonzero(ig == 1)
-        points = list(zip(ax[0], ax[1]))
-        for (i,j) in points:
-            cc = get_closest_center(labeled_centers_on_instance, cp, (i,j), max_center_points, labeled_grey_im, distance_metric)
-            results[(i,j)] = cc
-    return results
-
-
-# After reading about the various possibilities related to parallel programming in python, I decided to use Apache ray. The second and quite close candidate was joblib
-# Reasons for using Ray
-# 1. Support for shared objects (in joblib similar setup would require the user of numpy memmap)
-# 2. Actor model (which I have also admired)
-# 3. Cluster support
-# Must read: https://docs.ray.io/en/latest/auto_examples/tips-for-first-time.html
-# See also: https://towardsdatascience.com/10x-faster-parallel-python-without-python-multiprocessing-e5017c93cce1
-def parallel_find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_points, cpu_count, distance_metric = 'euclidean'):
-
-    # We parallelize at this point. Each thread gets n unique instances to label
-    unqi = np.unique(labeled_grey_im)
-    splits = np.arange(1, len(unqi), int(len(unqi)/cpu_count) )  # Split instances for parallel processing; 0 - background is ignored
-    indx_s = [(splits[i-1], splits[i]) for i in range(1, len(splits)) ]
-
-    # Store that large object in the local object store, instead of passing them around
-    labeled_centers_id = ray.put(labeled_centers)
-    labeled_grey_im_id = ray.put(labeled_grey_im)
-    max_center_points_id = ray.put(max_center_points)
-
-    # Do the main processing in parallel
-    start = time.time()
-    result_ids = [parallel_split_instance_based_on_centers.remote(labeled_grey_im_id, unqi[i:j], labeled_centers_id, max_center_points_id, distance_metric) for (i,j) in indx_s]
-    results = ray.get(result_ids)
-    logging.info(f"Duration for parallel splitting using {cpu_count} CPU: {time.time() - start} sec")
-
-    # Accumulate the results in a single dictionary
-    labelled_pixels = results[0]
-    for r in results[1:]:
-        labelled_pixels.update(r)
-
-    final_img = np.zeros_like(labeled_grey_im)
-    for ((i,j), cc) in labelled_pixels.items():
-        final_img[i,j] = cc
-    return final_img
-
 def get_centers_as_points(centers_image):
     return list(zip(*np.nonzero(centers_image > 0)))
 
+@jit(nopython=True)
 def find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_points, distance_metric = 'euclidean'):
     final_img = np.zeros_like(labeled_grey_im)
     unqi = np.unique(labeled_grey_im)
@@ -189,37 +144,26 @@ def find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_po
             final_img[i,j] = cc
     return final_img
 
-def separate_objects(img_grey, max_filter_size, centers_only, cpu_count):
-    logging.info('Separating objects. All times are cumulative.')
-    time1 = time.time()
+def separate_objects(img_grey, max_filter_size, centers_only):
     max_filter_size = max_filter_size # Default 15
-    # dist_transform = cv2.distanceTransform(img_grey, cv2.DIST_L2,5)
     dist_transform = ndimage.distance_transform_edt(img_grey)
-    logging.info(f'distance_transform_edt returned in {(time.time()-time1)*1000.0} ms.')
 
     m_img = ndimage.maximum_filter(dist_transform, size=max_filter_size)
     max_center_points_with_duplicates = np.where(m_img == dist_transform, m_img, 0)
-    # max_center_points = clustering_based_neigbourhood_cleanup(max_center_points_with_duplicates, int(max_filter_size/2))
     max_center_points = kernel_based_neighbourhood_cleanup(max_center_points_with_duplicates, int(max_filter_size/2))
-    logging.info(f'Centers found and cleaned up in total of {(time.time()-time1)*1000.0} ms.')
 
     m_centers = np.where(max_center_points>0,1,0)
     m_centers_to_labels, _ = ndimage.label(m_centers)
-    logging.info(f'Centers found in a total of {(time.time()-time1)*1000.0} ms.')
     if centers_only:
         return m_centers_to_labels, None
     else:
         # This is the slow step
         labeled_img_grey, _ = ndimage.label(img_grey)
-        if cpu_count <= 1: # Single threaded
-            relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_img_grey, max_center_points, 'euclidean')
-        else: # Multi threaded
-            relabed_img = parallel_find_pixel_class_by_distance(m_centers_to_labels, labeled_img_grey, max_center_points, cpu_count, 'euclidean')
-
+        relabed_img = find_pixel_class_by_distance(m_centers_to_labels, labeled_img_grey, max_center_points, 'euclidean')
         relabed_img = utils.majority_filter_based_upon_original_labels(relabed_img, labeled_img_grey, 3)
         return m_centers_to_labels, relabed_img
 
-def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size ,centers_only, force_overwrite, cpu_count):
+def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size ,centers_only, force_overwrite):
     # Get all input image paths
     files = glob( f"{input_dir}/{image_file_prefix}*{image_file_type}" )
     if len(files) == 0:
@@ -232,7 +176,7 @@ def separate_images_in_dir(input_dir, image_file_prefix, image_file_type, output
         out_center = f"{output_dir}/centers_{file.split('/')[-1]}"
         out_split_instances =  f"{output_dir}/center_based_relabeled_{file.split('/')[-1]}"
         if not os.path.isfile(out_center) or force_overwrite:
-            m_centers, relabed_img = separate_objects(img, max_filter_size ,centers_only, cpu_count)
+            m_centers, relabed_img = separate_objects(img, max_filter_size ,centers_only)
             logging.info(f'Centers written to {out_center} for {file}')
             utils.save_image(m_centers, out_center, meta)
             if not centers_only:
@@ -244,14 +188,9 @@ if __name__ == '__main__':
     logs_file = utils.initialize_log_dir(args.log_dir)
     print(f'Writing logs to {logs_file}')
 
-    cpu_count = utils.get_cpu_count(args.cpu)
-
     try:
-        ray.init(num_cpus = cpu_count) # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
-        separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type, args.output_dir, args.max_filter_size ,args.save_only_centers, args.force_overwrite, cpu_count)
-        ray.shutdown()
+        separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type, args.output_dir, args.max_filter_size ,args.save_only_centers, args.force_overwrite)
     except:
-        ray.shutdown()
         try:
             sys.exit(0)
         except SystemExit:
