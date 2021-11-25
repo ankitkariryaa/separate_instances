@@ -181,10 +181,10 @@ def find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_po
         labeled_centers_on_instance = labeled_centers * original_instance # Get the predicted centers on this instance
         centers_as_points = list(zip(*np.nonzero(labeled_centers_on_instance > 0))) # Get their coordinates
 
-        points_to_label = np.nonzero(original_instance == 1)
-        for index in range(len(points_to_label[0])):
-            i = points_to_label[0][index]
-            j = points_to_label[1][index]
+        points_left_to_label = np.nonzero(original_instance == 1)
+        for index in range(len(points_left_to_label[0])):
+            i = points_left_to_label[0][index]
+            j = points_left_to_label[1][index]
             cc = get_closest_center(labeled_centers_on_instance, centers_as_points, (i,j), max_center_points, labeled_grey_im, distance_metric)
             final_img[i,j] = cc
     return final_img
