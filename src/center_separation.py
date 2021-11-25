@@ -57,31 +57,32 @@ def kernel_based_neighbourhood_cleanup(center_points_with_duplicates, cleanup_ke
     points = list(zip(ax[0], ax[1]))
     xmax, ymax = final_centers.shape
     for (i,j) in points:
-        if final_centers[i,j] >= 0:
+        if final_centers[i,j] > 0:
             v = final_centers[i,j]
             # Remove other centers in the neightbourhood
             final_centers[max(i-cleanup_kernel, 0):min(i+cleanup_kernel+1,xmax) , max(j-cleanup_kernel,0):min(j+cleanup_kernel+1,ymax)] = 0
             final_centers[i,j] = v # Keep the original value
     return final_centers
 
-# Thanks for Mario Botsch, I still remember the easiest way of finding the points on a line segment connecting two points with a 8bit processor
+# Thanks for Mario Botsch, I still remember the Bresenham algorithm
 def connecting_points(p1, p2):
     x1, y1 = p1
     x2, y2 = p2
     xf = 1 if x2 > x1 else -1
     yf = 1 if y2 > y1 else -1
-    point_list = [p1]
+    point_list_x = [x1]
+    point_list_y = [y1]
     while y2 != y1 or x2 != x1:
         if yf*(y2 -y1) >= xf*(x2-x1):
             y1 += yf
         else:
             x1 += xf
-        point_list.append((x1,y1))
-    return point_list
+        point_list_x.append(x1)
+        point_list_y.append(y1)
+    return point_list_x, point_list_y
 
 def gaps_on_connecting_linesegment(p1, p2, img):
-    cp = connecting_points(p1, p2)
-    xs, ys = zip(*cp)
+    xs, ys = connecting_points(p1, p2)
     return np.count_nonzero(img[xs, ys] == 0)
 
 def get_distance_between_points(p1, p2, distance_metric):
@@ -93,21 +94,21 @@ def get_distance_between_points(p1, p2, distance_metric):
         raise NotImplementedError()
     return d
 
-def get_closest_center(labeled_centers_on_instance, center_points, point, height_center_points, img, distance_metric, no_connection_penalty = 10000):
+def get_closest_center(labeled_centers_on_instance, center_points, point, edge_distance_of_center_points, img, distance_metric, no_connection_penalty = 10000):
     if len(center_points) == 0:
         return 1
     elif len(center_points) == 1:
         return labeled_centers_on_instance[center_points[0]]
     selected_center = center_points[0]
     dt = get_distance_between_points(selected_center, point, distance_metric)
-    weight = 1 / height_center_points[selected_center]
+    weight = 1 / edge_distance_of_center_points[selected_center]
     gaps_on_linesegment = gaps_on_connecting_linesegment(selected_center, point, img)
     min_dist = (weight * dt) + (gaps_on_linesegment * no_connection_penalty)
 
     # Iterate over all centers until we find closest one
     for center in center_points[1:]:
         dt = get_distance_between_points(center, point, distance_metric)
-        weight = 1 / height_center_points[center]
+        weight = 1 / edge_distance_of_center_points[center]
         gaps_on_linesegment = gaps_on_connecting_linesegment(center, point, img)
         dist  = (weight * dt) + (gaps_on_linesegment * no_connection_penalty)
         if dist < min_dist:
@@ -169,36 +170,37 @@ def parallel_find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_
     return final_img
 
 def get_centers_as_points(centers_image):
-    cn = np.nonzero(centers_image > 0)
-    return list(zip(cn[0], cn[1]))
+    return list(zip(*np.nonzero(centers_image > 0)))
 
 def find_pixel_class_by_distance(labeled_centers, labeled_grey_im, max_center_points, distance_metric = 'euclidean'):
     final_img = np.zeros_like(labeled_grey_im)
     unqi = np.unique(labeled_grey_im)
-    for u in tqdm(unqi[1:]): # Iterate over all instances expect the background
+    for u in unqi[1:]: # Iterate over all instances expect the background
         # That's one instance as per original labels
-        ig = np.where(labeled_grey_im == u, 1, 0).astype(np.uint8)
-        labeled_centers_on_instance = labeled_centers * ig # Get the centers on this instance
-        cp = get_centers_as_points(labeled_centers_on_instance) # Get their coordinates
+        original_instance = np.where(labeled_grey_im == u, 1, 0)
+        labeled_centers_on_instance = labeled_centers * original_instance # Get the predicted centers on this instance
+        centers_as_points = list(zip(*np.nonzero(labeled_centers_on_instance > 0))) # Get their coordinates
 
-        ax = np.nonzero(ig == 1)
-        points = list(zip(ax[0], ax[1]))
-        for (i,j) in points:
-            cc = get_closest_center(labeled_centers_on_instance, cp, (i,j), max_center_points, labeled_grey_im, distance_metric)
+        points_to_label = np.nonzero(original_instance == 1)
+        for index in range(len(points_to_label[0])):
+            i = points_to_label[0][index]
+            j = points_to_label[1][index]
+            cc = get_closest_center(labeled_centers_on_instance, centers_as_points, (i,j), max_center_points, labeled_grey_im, distance_metric)
             final_img[i,j] = cc
     return final_img
 
 def separate_objects(img_grey, max_filter_size, centers_only, cpu_count):
     logging.info('Separating objects. All times are cumulative.')
     time1 = time.time()
-    max_filter_size = max_filter_size # Default 12
+    max_filter_size = max_filter_size # Default 15
     # dist_transform = cv2.distanceTransform(img_grey, cv2.DIST_L2,5)
     dist_transform = ndimage.distance_transform_edt(img_grey)
     logging.info(f'distance_transform_edt returned in {(time.time()-time1)*1000.0} ms.')
 
     m_img = ndimage.maximum_filter(dist_transform, size=max_filter_size)
     max_center_points_with_duplicates = np.where(m_img == dist_transform, m_img, 0)
-    max_center_points = clustering_based_neigbourhood_cleanup(max_center_points_with_duplicates, int(max_filter_size/2))
+    # max_center_points = clustering_based_neigbourhood_cleanup(max_center_points_with_duplicates, int(max_filter_size/2))
+    max_center_points = kernel_based_neighbourhood_cleanup(max_center_points_with_duplicates, int(max_filter_size/2))
     logging.info(f'Centers found and cleaned up in total of {(time.time()-time1)*1000.0} ms.')
 
     m_centers = np.where(max_center_points>0,1,0)
