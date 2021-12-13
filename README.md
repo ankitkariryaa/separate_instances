@@ -7,14 +7,18 @@ Overview
 Two appraoches for separating individual instances in case of overlapping segmentation. The approaches assume a symmetry in shape, as such can be useful for separating merged objects such as trees and cells. 
 
 
-Approach 1: Center based separation
+Approach 1a: Center based separation in raster space
 ------------------------------------
-This approach first finds the object centers, and then relabels the image based upon weighted distance to these centers. So, if a given blob contains multiple centers, then it will be divide into various instances accordingly. Current implementation adds a large penalty for not-in-sight centers, and additional performs majority filtering to remove the lone-pixels. 
+This approach first finds the object centers, and then relabels the image based upon weighted distance to these centers. So, if a given blob contains multiple centers, then it will be divide into various instances accordingly. Current implementation adds a large penalty for not-in-sight centers, and additionally performs majority filtering to remove the lone-pixels. 
 
 
-Approach 2: Erosion based separation
+Approach 1b: Erosion based separation in raster space
 ------------------------------------
 In this approach, we erode the image at multiple levels and store that new instances that merge in the process. For example, if a given blob were two split into multiple instances during erosion, we will store them as new instances and continue the process. 
+
+Approach 2: Separation in polygon space
+------------------------------------
+In this approach, we work on individual polygons instead of large rasters. At the core, this approach uses either 1a or 1b. The main advantage is that it can be optimized for the end task directly, e.g. if you are only interested in the center of the tree and it's area. 
 
 
 <!-- GETTING STARTED -->
@@ -40,6 +44,10 @@ Getting Started
 5. Run the scripts 
    ```sh
    python -m src.center_separation -h
+   ```
+   or
+   ```
+   python -m src.polygon_separation -i ./sample_vectorfiles -ft gpkg -p small --cpu 1 -oaa true -crd ./sample_images -crt tif
    ```
    
 Samples
