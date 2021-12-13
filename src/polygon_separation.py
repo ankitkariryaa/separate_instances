@@ -209,6 +209,8 @@ def separate_instances_in_dir(input_dir, file_prefix, file_type,
         processed_df, orcs = polygon_file_processing(file, corresponding_raster_table, resolution_per_pixel,
                                                      min_size, max_filter_size, only_approximate_area)
         out_file = f"{output_dir}/separated_{'centers_approx_' if only_approximate_area else ''}{file.split('/')[-1]}"
+        print(f'Writing the separated polygons to {out_file}')
+        logging.info(f'Writing the separated polygons to {out_file}')
         driver = utils.get_vector_driver(file_type)
         processed_df.to_file(out_file, driver=driver, crs=orcs, layer="trees")
 
