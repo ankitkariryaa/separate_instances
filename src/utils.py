@@ -14,6 +14,16 @@ from glob import glob
 from shapely.geometry import box
 
 
+def get_vector_driver(ftype):
+    if 'gpkg' in ftype:
+        return "GPKG"
+    elif 'shp' in ftype:
+        return "ESRI Shapefile"
+    elif 'json' in ftype:
+        return "GeoJSON"
+    else:
+        raise NotImplementedError("Unknown filetype")
+
 def build_images_table(base_path: str, image_file_type: str):
     cntr = 0
     reference_crs = None
@@ -179,10 +189,10 @@ def get_args(task):
 
     parser.add_argument('-i', '--input-dir', type=str, default='./sample_images',
                         help='where to read the input segmentation masks')
-    parser.add_argument('-ft', '--image-file-type', type=str, default='.tif',
-                        help='File type of images to process')
-    parser.add_argument('-p', '--image-file-prefix', type=str, default='',
-                        help='Prefix of the image to process')
+    parser.add_argument('-ft', '--file-type', type=str, default='.tif',
+                        help='File type of raster images /vectorfiles to process')
+    parser.add_argument('-p', '--file-prefix', type=str, default='',
+                        help='Prefix of the raster images / vectorfiles to process')
     parser.add_argument('-o', '--output-dir', type=str, default='./output',
                         help='where to save the output')
     parser.add_argument('-l', '--log-dir', type=str, default='./runs',

@@ -137,7 +137,7 @@ def polygon_file_processing(
 
     if only_approximate_area:
         small_polygons = small_polygons.to_crs(area_preserving_crs)
-        # It's the actual area but for consistency with later we call it "approximation"
+        # It's the actual area but for consistency we call it "approximation"
         small_polygons['approximate_area'] = small_polygons.area
         small_polygons = small_polygons.to_crs(ori_crs)
         small_polygons['geometry'] = small_polygons.centroid
@@ -165,8 +165,7 @@ def polygon_file_processing(
         fdf = fdf.to_crs(area_preserving_crs)
         fdf['area'] = fdf.area
         fdf = fdf.to_crs(ori_crs)
-
-    fdf.to_file('new_polygons.gpkg', driver="GPKG", crs=ori_crs, layer="trees")
+    return fdf, ori_crs
 
 # def divide_bounds(bounds, processor_count):
 #     left, bottom, right, top = bounds
@@ -188,11 +187,11 @@ def polygon_file_processing(
 #     total_bounds = fpf.bounds
 
 
-def separate_instances_in_dir(input_dir, image_file_prefix, image_file_type,
+def separate_instances_in_dir(input_dir, file_prefix, file_type,
                               corresponding_raster_dir, corresponding_raster_type, resolution_per_pixel,
                               output_dir, min_size, max_filter_size, only_approximate_area):
 
-    files = glob(f"{input_dir}/{image_file_prefix}*{image_file_type}")
+    files = glob(f"{input_dir}/{file_prefix}*{file_type}")
     if len(files) == 0:
         raise Exception('No files found in the specified folder!')
     Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -207,15 +206,18 @@ def separate_instances_in_dir(input_dir, image_file_prefix, image_file_type,
     for file in files:
         print(f'Analysing {file}')
         logging.info(f'Analysing {file}')
-        polygon_file_processing(file, corresponding_raster_table, resolution_per_pixel,
-                                min_size, max_filter_size, only_approximate_area)
+        processed_df, orcs = polygon_file_processing(file, corresponding_raster_table, resolution_per_pixel,
+                                                     min_size, max_filter_size, only_approximate_area)
+        out_file = f"{output_dir}/separated_{'centers_approx_' if only_approximate_area else ''}{file.split('/')[-1]}"
+        driver = utils.get_vector_driver(file_type)
+        processed_df.to_file(out_file, driver=driver, crs=orcs, layer="trees")
 
 
 if __name__ == '__main__':
     args = utils.get_args('polygon_separation')
     logs_file = utils.initialize_log_dir(args.log_dir)
     print(f'Writing logs to {logs_file}')
-    separate_instances_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type,
+    separate_instances_in_dir(args.input_dir, args.file_prefix, args.file_type,
                               args.corresponding_raster_dir, args.corresponding_raster_type, args.resolution_per_pixel,
                               args.output_dir, args.min_size, args.max_filter_size, args.only_approximate_area)
 

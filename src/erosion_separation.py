@@ -259,10 +259,10 @@ def iteratively_erode_and_separate_objects(
 
 
 def separate_images_in_dir(
-        input_dir, image_file_prefix, image_file_type, output_dir, min_size, clip_distance_list,
+        input_dir, file_prefix, file_type, output_dir, min_size, clip_distance_list,
         min_eroded_instance_size, force_overwrite, cpu_count):
     # Get all input image paths
-    files = glob(f"{input_dir}/{image_file_prefix}*{image_file_type}")
+    files = glob(f"{input_dir}/{file_prefix}*{file_type}")
     if len(files) == 0:
         raise Exception('No images found in the specified folder!')
     Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -290,7 +290,7 @@ if __name__ == '__main__':
 
     try:
         ray.init(num_cpus=cpu_count)  # Number of cpu/gpus should be specified here, e.g. num_cpus = 4
-        separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type,
+        separate_images_in_dir(args.input_dir, args.file_prefix, args.file_type,
                                args.output_dir, args.min_size, args.clip_distance_list, args.min_eroded_instance_size,
                                args.force_overwrite, cpu_count)
         ray.shutdown()

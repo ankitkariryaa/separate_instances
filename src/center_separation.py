@@ -181,9 +181,9 @@ def separate_objects(img_grey, max_filter_size, centers_only):
 
 
 def separate_images_in_dir(
-        input_dir, image_file_prefix, image_file_type, output_dir, max_filter_size, centers_only, force_overwrite):
+        input_dir, file_prefix, file_type, output_dir, max_filter_size, centers_only, force_overwrite):
     # Get all input image paths
-    files = glob(f"{input_dir}/{image_file_prefix}*{image_file_type}")
+    files = glob(f"{input_dir}/{file_prefix}*{file_type}")
     if len(files) == 0:
         raise Exception('No images found in the specified folder!')
     Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -208,7 +208,7 @@ if __name__ == '__main__':
     print(f'Writing logs to {logs_file}')
 
     try:
-        separate_images_in_dir(args.input_dir, args.image_file_prefix, args.image_file_type,
+        separate_images_in_dir(args.input_dir, args.file_prefix, args.file_type,
                                args.output_dir, args.max_filter_size, args.save_only_centers, args.force_overwrite)
     except:
         try:
