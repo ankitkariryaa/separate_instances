@@ -40,7 +40,7 @@ def polygon_center_separation(polygon, poly_shape, poly_transform, max_filter_si
     final_image = final_image.astype(np.uint8)
 
     dp = []
-    for feature, _ in rasterio.features.shapes(final_image, mask=final_image, connectivity=8, transform=poly_tf):
+    for feature, _ in rasterio.features.shapes(final_image, mask=final_image, connectivity=4, transform=poly_tf):
         dp.append(shape(feature))
 
     if len(dp) == 1:
