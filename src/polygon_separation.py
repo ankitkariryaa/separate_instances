@@ -34,13 +34,13 @@ def get_shape_transform_in_original_resolution(pbounds, im_transform):
 
 def polygon_center_separation(polygon, poly_shape, poly_transform, max_filter_size):
     poly_tf = Affine(*poly_transform[:6])
-    pimg = rasterio.features.rasterize([polygon], out_shape=poly_shape, all_touched=True, transform=poly_tf)
+    pimg = rasterio.features.rasterize([polygon], out_shape=poly_shape, all_touched=False, transform=poly_tf)
     _, _, final_image = center_separation.separate_objects(pimg, max_filter_size, centers_only=False)
 
     final_image = final_image.astype(np.uint8)
 
     dp = []
-    for feature, _ in rasterio.features.shapes(final_image, mask=final_image, connectivity=4, transform=poly_tf):
+    for feature, _ in rasterio.features.shapes(final_image, mask=final_image, connectivity=8, transform=poly_tf):
         dp.append(shape(feature))
 
     if len(dp) == 1:
