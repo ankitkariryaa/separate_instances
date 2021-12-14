@@ -28,7 +28,7 @@ def get_shape_transform_in_original_resolution(pbounds, im_transform):
     wn = windows.from_bounds(*pbounds, im_transform)
     wnt = windows.transform(wn, im_transform)
     wn_shape = windows.shape(wn)
-    wns = (int(wn_shape[0]), int(wn_shape[1]))  # Convert to int
+    wns = (round(wn_shape[0]), round(wn_shape[1]))  # Convert to int
     return (wns, wnt)
 
 
