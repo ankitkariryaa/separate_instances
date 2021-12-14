@@ -13,6 +13,28 @@ from datetime import datetime
 from glob import glob
 from shapely.geometry import box
 
+import contextlib
+import joblib
+from tqdm import tqdm
+from joblib import Parallel, delayed
+
+
+@contextlib.contextmanager
+def tqdm_joblib(tqdm_object):
+    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __call__(self, *args, **kwargs):
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()
+
 
 def get_vector_driver(ftype):
     if 'gpkg' in ftype:
@@ -23,6 +45,7 @@ def get_vector_driver(ftype):
         return "GeoJSON"
     else:
         raise NotImplementedError("Unknown filetype")
+
 
 def build_images_table(base_path: str, image_file_type: str):
     cntr = 0
@@ -175,7 +198,7 @@ def initialize_log_dir(log_dir):
 
 
 def get_cpu_count(cpu):
-    phy_cpu = psutil.cpu_count(logical=True)
+    phy_cpu = psutil.cpu_count()#logical=True)
     if cpu == -1 or phy_cpu < cpu:
         cpu_count = phy_cpu
     else:
