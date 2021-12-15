@@ -1,4 +1,5 @@
-from os import cpu_count
+import os
+import os.path
 import time
 import logging
 from rasterio.features import Affine
@@ -254,11 +255,22 @@ def divide_count(cpu, total_polygons):
 
 
 def multi_thread_file_processing(file, file_type, output_dir, corresponding_raster_table, resolution_per_pixel,
-                                 min_size, max_filter_size, only_approximate_area, cpu):
-    print(f'Analysing {file}')
-    logging.info(f'Analysing {file}')
+                                 min_size, max_filter_size, only_approximate_area, cpu, force_overwrite):
     fpf = fiona.open(file)
     total_polygons = len(fpf)
+    print(f'Analysing {file} with {total_polygons} polygons')
+    logging.info(f'Analysing {file} with {total_polygons} polygons')
+
+    ofn = 'centers_approx_' if only_approximate_area else ''
+    cfn = f"cpu_{cpu}_"
+    out_file = f"{output_dir}/separated_{ofn}{cfn}{file.split('/')[-1]}"
+    if os.path.isfile(out_file):
+        if not force_overwrite:
+            logging.info(f'{out_file} already exists. Skipping it.')
+            return
+        else:
+            logging.info(f'Overwriting existing file {out_file}.')
+            os.remove(out_file)
 
     # The following can be used for dividing the image along bounds;
     # Bounds can lead to duplicates due to "intersection" with bounds and also results in the following:
@@ -292,9 +304,7 @@ def multi_thread_file_processing(file, file_type, output_dir, corresponding_rast
 
     processed_df = pd.concat(df_collection, ignore_index=True, sort=False)
     processed_df.drop_duplicates(subset=None, keep='first', inplace=True, ignore_index=True)
-    ofn = 'centers_approx_' if only_approximate_area else ''
-    cfn = f"cpu_{cpu}_"
-    out_file = f"{output_dir}/separated_{ofn}{cfn}{file.split('/')[-1]}"
+
     print(f'Writing the separated polygons to {out_file}')
     logging.info(f'Writing the separated polygons to {out_file}')
     driver = utils.get_vector_driver(file_type)
@@ -302,11 +312,21 @@ def multi_thread_file_processing(file, file_type, output_dir, corresponding_rast
 
 
 def single_thread_file_processing(file, file_type, output_dir, corresponding_raster_table, resolution_per_pixel,
-                                  min_size, max_filter_size, only_approximate_area):
+                                  min_size, max_filter_size, only_approximate_area, force_overwrite):
     fpf = fiona.open(file)
     total_polygons = len(fpf)
     print(f'Analysing {file} with {total_polygons} polygons')
     logging.info(f'Analysing {file} with {total_polygons} polygons')
+
+    ofn = 'centers_approx_' if only_approximate_area else ''
+    out_file = f"{output_dir}/separated_{ofn}{file.split('/')[-1]}"
+    if os.path.isfile(out_file):
+        if not force_overwrite:
+            logging.info(f'{out_file} already exists. Skipping it.')
+            return
+        else:
+            logging.info(f'Overwriting existing file {out_file}.')
+            os.remove(out_file)
 
     with tqdm(total=total_polygons) as pbar:
         processed_df, file_crs = polygon_file_processing(
@@ -314,8 +334,6 @@ def single_thread_file_processing(file, file_type, output_dir, corresponding_ras
             only_approximate_area, pbar=pbar)
     processed_df.drop_duplicates(subset=None, keep='first', inplace=True, ignore_index=True)
 
-    ofn = 'centers_approx_' if only_approximate_area else ''
-    out_file = f"{output_dir}/separated_{ofn}{file.split('/')[-1]}"
     print(f'Writing the separated polygons to {out_file}')
     logging.info(f'Writing the separated polygons to {out_file}')
     driver = utils.get_vector_driver(file_type)
@@ -324,7 +342,7 @@ def single_thread_file_processing(file, file_type, output_dir, corresponding_ras
 
 def separate_instances_in_dir(input_dir, file_prefix, file_type,
                               corresponding_raster_dir, corresponding_raster_type, resolution_per_pixel,
-                              output_dir, min_size, max_filter_size, only_approximate_area, cpu):
+                              output_dir, min_size, max_filter_size, only_approximate_area, cpu, force_overwrite):
 
     files = glob(f"{input_dir}/{file_prefix}*{file_type}")
     if len(files) == 0:
@@ -341,10 +359,10 @@ def separate_instances_in_dir(input_dir, file_prefix, file_type,
     for file in files:
         if cpu == 1 or cpu == 0:
             single_thread_file_processing(file, file_type, output_dir, corresponding_raster_table, resolution_per_pixel,
-                                          min_size, max_filter_size, only_approximate_area)
+                                          min_size, max_filter_size, only_approximate_area, force_overwrite)
         else:
             multi_thread_file_processing(file, file_type, output_dir, corresponding_raster_table, resolution_per_pixel,
-                                         min_size, max_filter_size, only_approximate_area, cpu)
+                                         min_size, max_filter_size, only_approximate_area, cpu, force_overwrite)
 
 
 # Known issue; logging does not work with joblib parallel
@@ -354,9 +372,10 @@ if __name__ == '__main__':
     logs_file = utils.initialize_log_dir(args.log_dir)
     print(f'Writing logs to {logs_file}')
     cpu_count = utils.get_cpu_count(args.cpu)
-    separate_instances_in_dir(args.input_dir, args.file_prefix, args.file_type,
-                              args.corresponding_raster_dir, args.corresponding_raster_type, args.resolution_per_pixel,
-                              args.output_dir, args.min_size, args.max_filter_size, args.only_approximate_area, cpu_count)
+    separate_instances_in_dir(
+        args.input_dir, args.file_prefix, args.file_type, args.corresponding_raster_dir, args.corresponding_raster_type,
+        args.resolution_per_pixel, args.output_dir, args.min_size, args.max_filter_size, args.only_approximate_area,
+        cpu_count, args.force_overwrite)
 
 
 # Read the bounds
