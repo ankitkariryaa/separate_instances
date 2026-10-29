@@ -47,6 +47,17 @@ Getting Started
    uv run python -m src.center_separation -i ./sample_images -p pred_ndvi_0-5000_surrey_186_027 -ft .tif -o ./output -m 15
    ```
    Add `-c true` to only save the centers, and `-f true` to overwrite existing outputs.
+
+   To vectorize the split instances, polygonize the relabelled raster with GDAL (not installed by `uv sync`, it
+   needs a system GDAL installation). Using the raster as its own mask skips the background (label 0), and the
+   label of each instance is stored in the `label` attribute of the `trees` layer:
+   ```sh
+   gdal_polygonize.py ./output/center_based_relabeled_pred_ndvi_0-5000_surrey_186_027.tif \
+       -mask ./output/center_based_relabeled_pred_ndvi_0-5000_surrey_186_027.tif \
+       -b 1 -f GPKG ./output/center_based_relabeled_pred_ndvi_0-5000_surrey_186_027.gpkg trees label
+   ```
+   Pixels are connected with 4-connectivity (add `-8` for 8-connectivity), so an instance that is split into
+   multiple pieces results in multiple polygons with the same `label`.
    
    or
    ```
