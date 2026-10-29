@@ -8,15 +8,12 @@ import rasterio
 from scipy import ndimage
 import numpy as np
 import geopandas as gpd
-from pathlib import Path
 from datetime import datetime
 from glob import glob
 from shapely.geometry import box
 
 import contextlib
 import joblib
-from tqdm import tqdm
-from joblib import Parallel, delayed
 
 
 @contextlib.contextmanager
@@ -70,7 +67,7 @@ def build_images_table(base_path: str, image_file_type: str):
         for i in range(len(nodata)):
             if nodata[i] is None:
                 nodata[i] = np.nan
-        nodata = nodata.astype(np.float).reshape((-1, 1, 1))
+        nodata = nodata.astype(float).reshape((-1, 1, 1))
 
         im_dict.update({
             'geometry': box(*img.bounds),
@@ -118,50 +115,27 @@ def str2bool(arg_name):
 
 
 def read_image(img_path, fill_holes=True, dtype=np.uint8):
-    im = rasterio.open(img_path)
-    meta = im.meta
-    img = im.read()
-    img_grey = img[0, :, :]  # .mean(axis=(0))) # Same as [0,:,:], for single band image
+    with rasterio.open(img_path) as im:
+        meta = im.meta.copy()
+        # Nodata pixels are treated as background, otherwise a non-zero nodata value would become foreground
+        img_grey = im.read(1, masked=True).filled(0)
     if fill_holes:
         img_grey = ndimage.binary_fill_holes(img_grey)
     return img_grey.astype(dtype), meta
 
 
 def save_image(img, img_path, meta, dtype=rasterio.uint32):
+    meta = meta.copy()
+    # The input nodata value could collide with a label, so the output has none; background is 0
     meta.update(count=1,
                 dtype=dtype,
+                nodata=None,
                 TILED='YES',
                 COMPRESS='LZW',
                 BIGTIFF='IF_SAFER',
-                multithread=True,
                 NUM_THREADS='ALL_CPUS')
     with rasterio.open(img_path, 'w', **meta) as dst:
         dst.write(img.astype(dtype), 1)
-
-
-def majority_filter_based_upon_original_labels(img_distance_labeled, img_ori_labeled, voting_kernel):
-    final_img = img_distance_labeled.copy()
-    xmax, ymax = img_distance_labeled.shape
-
-    unqi = np.unique(img_ori_labeled)
-    for u in unqi[1:]:  # Iterate over all instances expect the background
-        ig = np.where(img_ori_labeled == u, 1, 0).astype(np.uint8)
-        labeled_instance = img_distance_labeled * ig  # Get the centers on this instance
-        ax = np.nonzero(labeled_instance != 0)
-        points = list(zip(ax[0], ax[1]))
-
-        for (i, j) in points:
-            cn = labeled_instance[max(i - voting_kernel, 0): min(i + voting_kernel + 1, xmax),
-                                  max(j - voting_kernel, 0): min(j + voting_kernel + 1, ymax)]
-            unq, unc = np.unique(cn, return_counts=True)
-            unqc_sorted_index = np.argsort(-unc)
-
-            mj = unq[unqc_sorted_index][0]
-            if mj == 0:  # If background is the majority class, then we take the next class
-                mj = unq[unqc_sorted_index][1]
-            if mj != final_img[i, j]:  # Replace with majority class if it is a current class is a minority
-                final_img[i, j] = mj
-    return final_img
 
 
 def majority_filter(img_ori, voting_kernel):
@@ -186,8 +160,7 @@ def majority_filter(img_ori, voting_kernel):
 def initialize_log_dir(log_dir):
 
     current_time = datetime.now().strftime('%b%d_%H-%M-%S')
-    rs = random.Random(datetime.now())
-    hash = rs.getrandbits(4)
+    hash = random.getrandbits(4)
     os.makedirs(log_dir, exist_ok=True)
     logs_file = os.path.join(log_dir, f'{current_time}_{hash}_{socket.gethostname()}_logs.txt')
 

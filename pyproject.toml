@@ -1,0 +1,32 @@
+[project]
+name = "separate-instances"
+version = "0.1.0"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "geopandas>=1.2.0",
+    "joblib>=1.6.0",
+    "matplotlib>=3.11.2",
+    "numba>=0.68.1",
+    "numpy>=2.5.4",
+    "pandas>=3.1.0",
+    "psutil>=7.2.2",
+    "pyogrio>=0.13.0",
+    "rasterio>=1.5.2",
+    "ray>=2.59.0",
+    "scipy>=1.18.1",
+    "shapely>=2.2.0",
+    "tqdm>=4.70.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120

@@ -3,11 +3,10 @@ import os.path
 import time
 import logging
 from rasterio.features import Affine
-import fiona
+import pyogrio
 import math
 import numpy as np
 from pathlib import Path
-from numpy.core.numeric import ones
 from shapely.geometry import polygon
 from shapely.geometry.geo import box
 from shapely.geometry.point import Point
@@ -256,8 +255,7 @@ def divide_count(cpu, total_polygons):
 
 def multi_thread_file_processing(file, file_type, output_dir, corresponding_raster_table, resolution_per_pixel,
                                  min_size, max_filter_size, only_approximate_area, cpu, force_overwrite):
-    fpf = fiona.open(file)
-    total_polygons = len(fpf)
+    total_polygons = pyogrio.read_info(file)['features']
     print(f'Analysing {file} with {total_polygons} polygons')
     logging.info(f'Analysing {file} with {total_polygons} polygons')
 
@@ -313,8 +311,7 @@ def multi_thread_file_processing(file, file_type, output_dir, corresponding_rast
 
 def single_thread_file_processing(file, file_type, output_dir, corresponding_raster_table, resolution_per_pixel,
                                   min_size, max_filter_size, only_approximate_area, force_overwrite):
-    fpf = fiona.open(file)
-    total_polygons = len(fpf)
+    total_polygons = pyogrio.read_info(file)['features']
     print(f'Analysing {file} with {total_polygons} polygons')
     logging.info(f'Analysing {file} with {total_polygons} polygons')
 

@@ -33,23 +33,25 @@ Getting Started
    ```sh
    cd seperate_trees
    ```   
-3. Install dependencies 
+3. Install dependencies with [uv](https://docs.astral.sh/uv/) (this also installs the pinned Python version)
    ```sh
-   conda env create -f environment.yml
+   uv sync
    ```
-4. Activate environment 
+4. Run the scripts 
    ```sh
-   conda activate separate-trees
-   ```
-5. Run the scripts 
-   ```sh
-   python -m src.center_separation -h
+   uv run python -m src.center_separation -h
    ```
    or
    ```
-   python -m src.polygon_separation -i ./sample_vectorfiles -ft gpkg -p small --cpu 1 -oaa true -crd ./sample_images -crt tif
+   uv run python -m src.polygon_separation -i ./sample_vectorfiles -ft gpkg -p small --cpu 1 -oaa true -crd ./sample_images -crt tif
    ```
    
+Tests
+----------
+```sh
+uv run pytest
+```
+
 Samples
 ----------
 
@@ -60,7 +62,7 @@ Input image:
 Predicted centers and pixel labels using center based separation technique (approach 1).
 ![image](https://user-images.githubusercontent.com/822583/142919674-2586f603-44c0-4509-ba0b-828de33fd65d.png)
 
-In this image the centers were found in 108ms and the labels were found in 52 seconds on 1 core (single thread), and 24 seconds on 4 CPU cores. 
+In this image the centers and labels are found in about 0.3 seconds on 1 core (the timings in the image predate the current implementation).
 
 Predicted pixel labels using erosion based separation technique (approach 2).
 ![image](https://user-images.githubusercontent.com/822583/142921459-fc29918a-a1a3-4a5c-bb49-f58c6ed02156.png)
@@ -69,4 +71,4 @@ In this image the labels were found in 84.8 seconds on 4 CPU cores. The instance
 Known issues
 ----------
 1. Approach 1 (center based separation) can in somecases lead to lone pixels. It usually happens when the closest/expected center is not in sight.
-2. Extremely slow processing with certain large images. I am still debugging this issue.
+2. Extremely slow processing with certain large images. For center based separation this was caused by scanning the full image once per instance and is fixed; the other approaches may still be affected.
