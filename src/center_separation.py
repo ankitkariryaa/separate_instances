@@ -167,7 +167,8 @@ def find_pixel_class_by_distance(labeled_centers, labeled_img, center_distances,
     return final_img
 
 
-def separate_objects(img_grey, max_filter_size, centers_only, no_connection_penalty=10, voting_kernel=3):
+def separate_objects(img_grey, max_filter_size, centers_only, no_connection_penalty=10, voting_kernel=3,
+                     connectivity=4):
     """Separate merged instances in a segmentation mask based upon their centers.
 
     Args:
@@ -176,6 +177,7 @@ def separate_objects(img_grey, max_filter_size, centers_only, no_connection_pena
         centers_only (bool): Only find the centers and skip the (slow) relabelling of the pixels.
         no_connection_penalty (float): Penalty per background pixel between a pixel and a center.
         voting_kernel (int): Half-size of the majority filter used to remove lone pixels.
+        connectivity (int): Pixel connectivity (4 or 8) used to find the instances in the mask.
 
     Returns:
         labeled_centers (2D int32 array): Centers labelled 1..n.
@@ -184,7 +186,10 @@ def separate_objects(img_grey, max_filter_size, centers_only, no_connection_pena
     """
     if max_filter_size < 1:
         raise ValueError(f'max_filter_size must be positive, got {max_filter_size}')
-    labeled_img, _ = ndimage.label(img_grey)
+    if connectivity not in (4, 8):
+        raise ValueError(f'connectivity must be 4 or 8, got {connectivity}')
+    structure = ndimage.generate_binary_structure(2, 1 if connectivity == 4 else 2)
+    labeled_img, _ = ndimage.label(img_grey, structure=structure)
     dist_transform = ndimage.distance_transform_edt(img_grey)
     labeled_centers, center_distances = find_centers(labeled_img, dist_transform, max_filter_size)
     if centers_only:
@@ -196,7 +201,8 @@ def separate_objects(img_grey, max_filter_size, centers_only, no_connection_pena
 
 
 def separate_images_in_dir(
-        input_dir, file_prefix, file_type, output_dir, max_filter_size, centers_only, force_overwrite):
+        input_dir, file_prefix, file_type, output_dir, max_filter_size, centers_only, force_overwrite,
+        connectivity=4):
     files = sorted(Path(input_dir).glob(f"{file_prefix}*{file_type}"))
     if len(files) == 0:
         raise FileNotFoundError(f'No images matching {file_prefix}*{file_type} found in {input_dir}!')
@@ -212,7 +218,8 @@ def separate_images_in_dir(
 
         logging.info(f'Analysing {file}')
         img, meta = utils.read_image(file)
-        labeled_centers, _, relabeled_img = separate_objects(img, max_filter_size, centers_only)
+        labeled_centers, _, relabeled_img = separate_objects(
+            img, max_filter_size, centers_only, connectivity=connectivity)
         utils.save_image(labeled_centers, out_center, meta)
         logging.info(f'Centers written to {out_center} for {file}')
         if not centers_only:
@@ -226,4 +233,5 @@ if __name__ == '__main__':
     print(f'Writing logs to {logs_file}')
 
     separate_images_in_dir(args.input_dir, args.file_prefix, args.file_type,
-                           args.output_dir, args.max_filter_size, args.save_only_centers, args.force_overwrite)
+                           args.output_dir, args.max_filter_size, args.save_only_centers, args.force_overwrite,
+                           args.connectivity)

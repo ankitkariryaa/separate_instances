@@ -86,3 +86,25 @@ def test_cli_skips_existing_outputs(tmp_path):
     # Centers exist from the run above, but the relabeled image must still be produced
     cs.separate_images_in_dir('sample_images', '', '.tif', tmp_path, 15, False, False)
     assert (tmp_path / 'center_based_relabeled_image1.tif').is_file()
+
+
+@pytest.mark.parametrize('connectivity, expected_instances', [(4, 2), (8, 1)])
+def test_connectivity(connectivity, expected_instances):
+    img = np.zeros((30, 30), dtype=np.uint8)
+    img[2:10, 2:10] = 1
+    img[10:18, 10:18] = 1  # Touches the first square only diagonally
+    labeled, n = ndimage.label(img, structure=ndimage.generate_binary_structure(2, connectivity // 4))
+    assert n == expected_instances
+
+    centers, _, relabeled = cs.separate_objects(img, 5, centers_only=False, connectivity=connectivity)
+    assert np.array_equal(relabeled > 0, img > 0)
+    for instance in range(1, n + 1):
+        assert np.count_nonzero(centers[labeled == instance]) >= 1
+    for label in np.unique(relabeled)[1:]:
+        assert len(np.unique(labeled[relabeled == label])) == 1
+    assert relabeled[5, 5] != relabeled[14, 14]
+
+
+def test_invalid_connectivity():
+    with pytest.raises(ValueError):
+        cs.separate_objects(np.ones((5, 5), dtype=np.uint8), 3, centers_only=True, connectivity=6)

@@ -206,6 +206,10 @@ def get_args(task):
             help='One of the hyperparameters. The kernel size of the max filter operation (in pixels). It should be close to width/height of an average instance.')
         parser.add_argument('-c', '--save-only-centers', type=str2bool("save_only_centers"),
                             dest='save_only_centers', default=False, help='Whether to save the only the centers.')
+    if task == 'center_separation':
+        parser.add_argument(
+            '-cn', '--connectivity', type=int, choices=[4, 8], default=4,
+            help='Pixel connectivity used to find the instances in the mask. With 8, diagonally touching pixels belong to the same instance.')
     if task == 'erosion_separation' or task == 'polygon_separation':
         parser.add_argument('-eis', '--min-eroded-instance-size', metavar='B', type=int, default=4,
                             help='Minimum size of an eroded instance to be considered for spliting.')
