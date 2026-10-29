@@ -41,6 +41,13 @@ Getting Started
    ```sh
    uv run python -m src.center_separation -h
    ```
+   For example, center based separation of the sample image `pred_ndvi_0-5000_surrey_186_027.tif`
+   (outputs `centers_*.tif` and `center_based_relabeled_*.tif` are written to `./output`, logs to `./runs`):
+   ```sh
+   uv run python -m src.center_separation -i ./sample_images -p pred_ndvi_0-5000_surrey_186_027 -ft .tif -o ./output -m 15
+   ```
+   Add `-c true` to only save the centers, and `-f true` to overwrite existing outputs.
+   
    or
    ```
    uv run python -m src.polygon_separation -i ./sample_vectorfiles -ft gpkg -p small --cpu 1 -oaa true -crd ./sample_images -crt tif
